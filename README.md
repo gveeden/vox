@@ -1,4 +1,3 @@
-```markdown
 # Parakeet Voice Transcription
 
 A voice-to-text transcription tool using NVIDIA's Parakeet ASR model with local hotkey support for macOS.
