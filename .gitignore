@@ -1,0 +1,9 @@
+# Directories
+archive/
+clevernote/
+transcripts/
+whisper_env/
+
+# Audio files
+*.wav
+.DS_Store
