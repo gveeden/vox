@@ -8,21 +8,15 @@ import pyperclip
 import pyautogui
 import nemo.collections.asr as nemo_asr
 
-from nemo.collections.nlp.models import PunctuationCapitalizationModel
 import os
 import subprocess
 import sys
 
-# ✅ Load your Parakeet ASR model (can swap with "stt_en_conformer_transducer_large" if you want)
+# ✅ Load your Parakeet ASR model
 print("🔊 Loading ASR model (this may take a bit)...")
-MODEL_NAME = "nvidia/parakeet-ctc-0.6b"
-asr_model = nemo_asr.models.EncDecRNNTBPEModel.from_pretrained(MODEL_NAME)
+MODEL_NAME = "nvidia/parakeet-tdt-0.6b-v3"
+asr_model = nemo_asr.models.ASRModel.from_pretrained(MODEL_NAME)
 print("✅ ASR Model loaded!")
-
-# Load punctuation and capitalization model
-print("🔤 Loading punctuation model...")
-punct_model = PunctuationCapitalizationModel.from_pretrained('punctuation_en_bert')
-print("✅ Punctuation model loaded!")
 
 recording = []
 is_recording = False
@@ -49,15 +43,28 @@ def record_audio():
 
     # Transcribe
     try:
+        # TDT model returns text directly when not using return_hypotheses=True
         text_output = asr_model.transcribe([audio_path])
-        # Extract text from Hypothesis object
-        if isinstance(text_output, list) and len(text_output) > 0:
-            text = text_output[0].text if hasattr(text_output[0], 'text') else str(text_output[0])
-        else:
-            text = text_output.text if hasattr(text_output, 'text') else str(text_output)
         
-        # Add punctuation and capitalization
-        text = punct_model.add_punctuation_capitalization([text])[0]
+        # Handle different return formats
+        if isinstance(text_output, list) and len(text_output) > 0:
+            # List of results
+            if hasattr(text_output[0], 'text'):
+                text = text_output[0].text
+            else:
+                text = str(text_output[0])
+        elif isinstance(text_output, tuple) and len(text_output) > 0:
+            # Tuple format (hypotheses, ...)
+            if isinstance(text_output[0], list) and len(text_output[0]) > 0:
+                text = text_output[0][0].text if hasattr(text_output[0][0], 'text') else str(text_output[0][0])
+            else:
+                text = text_output[0].text if hasattr(text_output[0], 'text') else str(text_output[0])
+        elif hasattr(text_output, 'text'):
+            # Single hypothesis object
+            text = text_output.text
+        else:
+            # Direct string or other format
+            text = str(text_output)
         
         # Create transcripts folder if it doesn't exist
         os.makedirs("transcripts", exist_ok=True)
@@ -71,8 +78,6 @@ def record_audio():
 
         # Copy and paste to cursor location
         pyperclip.copy(text)
-        import time
-        time.sleep(0.5)  # Give user time to position cursor
         pyautogui.hotkey("command", "v")
 
         print(f"💬 Transcript: {text[:100]}...")
@@ -149,3 +154,7 @@ def on_release(key):
 print("🚀 Ready! Hold Command+Option+Space to record. Release Space to transcribe.")
 with pynput.keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
     listener.join()
+
+
+
+
