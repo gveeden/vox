@@ -1,0 +1,23 @@
+# Parakeet CLI Configuration
+
+# Modifier key: Alt, Ctrl, Cmd (Command/Meta), or Shift
+# Default: Alt
+modifier_key = "Alt"
+
+# Trigger key: Space, Enter, Tab, Escape
+# Default: Space
+# The hotkey is captured and WILL NOT reach other applications!
+trigger_key = "Space"
+
+# Usage:
+# Press modifier_key + trigger_key to START recording
+# Press modifier_key + trigger_key again to STOP and transcribe
+#
+# Works immediately for subsequent recordings (no need to press twice!)
+#
+# Recommended combinations:
+# - Alt+Space (default, won't create spaces in editors)
+# - Alt+Enter (alternative)
+# - Ctrl+Space (if Alt conflicts with other apps)
+
+

@@ -1,75 +1,226 @@
-# Parakeet Voice Transcription
+# Parakeet CLI - Voice Transcription Tool
 
-A voice-to-text transcription tool using NVIDIA's Parakeet ASR model with local hotkey support for macOS.
+A Rust implementation of voice transcription using NVIDIA Parakeet ASR models via ONNX Runtime. Record audio with a keyboard shortcut and automatically transcribe to text.
 
-## What is parakeet.py?
+## Features
 
-`parakeet.py` is a very basic (WIP) real-time voice transcription application that allows you to record audio using a keyboard shortcut and automatically transcribe it to text. The transcribed text is automatically pasted at your cursor location.
+- 🎙️ Voice recording with keyboard hotkey (Cmd+Option+Space)
+- 🤖 Support for any ONNX-format Parakeet models
+- 🌍 CTC (English-only) and TDT (multilingual, 25+ languages) models
+- 📋 Automatic clipboard copy and paste
+- 💾 Save transcripts to files
+- 🔔 Native notifications
+- ⚡ Fast inference using ONNX Runtime
+- 🖥️ Cross-platform (macOS, Linux, Windows)
 
-Currently just for my personal use.
+## Requirements
 
-### Features
+- Rust 1.70 or later
+- ONNX model files (see Model Setup below)
+- Microphone access
 
-- **Local ASR Model**: Uses NVIDIA's Parakeet CTC 0.6B model for high-quality speech recognition
-- **Punctuation & Capitalization**: Automatically adds proper punctuation and capitalization using BERT
-- **Hotkey Control**: Hold `Command+Option+Space` to record, release `Space` to transcribe
-- **Visual Feedback**: Shows a recording overlay while capturing audio
-- **Auto-Paste**: Transcribed text is automatically copied to clipboard and pasted at cursor
-- **Transcript Storage**: Saves all transcripts to the `transcripts/` folder with timestamps
+## Installation
 
-## Setup
-
-### Prerequisites
-
-- Python 3.8+
-- macOS
-
-### Installation
-
-1. Create a virtual environment (recommended):
 ```bash
-python3 -m venv speech_to_text_env
-source speech_to_text_env/bin/activate
+cargo build --release
 ```
 
-2. Install dependencies:
-```bash
-pip install sounddevice scipy pynput numpy pyperclip pyautogui nemo_toolkit[asr] PyObjC
-```
+The binary will be available at `target/release/parakeet`.
+
+## Model Setup
+
+### Option 1: CTC Model (English-only)
+
+Download the ONNX model files to a directory. Required files:
+- `model.onnx` (or `model_fp16.onnx`, `model_int8.onnx`, `model_q4.onnx`)
+- `tokenizer.json`
+- `config.json`
+- `preprocessor_config.json`
+
+### Option 2: TDT Model (Multilingual)
+
+For the TDT model (supports 25+ languages), you need:
+- `encoder-model.onnx`
+- `decoder_joint-model.onnx`
+- `vocab.txt`
+- Configuration files
+
+You can download pre-converted ONNX models or convert from NeMo format.
 
 ## Usage
 
-1. Run the script:
+### Basic Usage (CTC Model)
+
 ```bash
-python parakeet.py
+# Use model from current directory
+./parakeet --model .
+
+# Or specify a model file
+./parakeet --model /path/to/model.onnx
 ```
 
-2. Wait for models to load (first run may take longer)
+### TDT Model (Multilingual)
 
-3. Hold `Command+Option+Space` to start recording
-   - A recording indicator overlay will appear
+```bash
+# Use TDT model
+./parakeet --model /path/to/tdt_model_dir --tdt
+```
 
-4. Speak your text
+### Command Line Options
 
-5. Release `Space` to stop recording and transcribe
-   - The transcribed text will be automatically pasted at your cursor location
-   - Transcript is saved to `transcripts/transcript_YYYY-MM-DD_HH-MM-SS.txt`
+```
+Options:
+  -m, --model <MODEL>              Path to ONNX model directory or file [required]
+  -t, --tdt                        Use TDT model (multilingual)
+  -o, --output-dir <DIR>           Output directory for transcripts [default: transcripts]
+  -k, --keep-audio                 Keep audio recordings (don't delete after transcription)
+  -s, --sample-rate <SAMPLE_RATE>  Audio sample rate in Hz [default: 16000]
+  -h, --help                       Print help
+  -V, --version                    Print version
+```
 
-## How It Works
+## Configuration
 
-1. **Audio Recording**: Captures audio at 16kHz using sounddevice
-2. **ASR Processing**: Transcribes audio using NVIDIA Parakeet CTC 0.6B model
-3. **Post-Processing**: Adds punctuation and capitalization using BERT-based model
-4. **Output**: Copies to clipboard and auto-pastes to cursor location
+Create a `config.toml` file to customize hotkeys:
 
-## Files
+```toml
+# Modifier key: Alt, Ctrl, Cmd, or Shift
+modifier_key = "Alt"
 
-- `parakeet.py` - Main transcription application
-- `overlay.py` - Visual recording indicator using PyObjC
-- `transcripts/` - Directory containing all saved transcripts (auto-created)
+# Trigger key: Space, Return, Tab, Escape
+trigger_key = "Space"
+```
 
-## Notes
+The application will create a default config.toml on first run if one doesn't exist.
 
-- Audio recordings are temporarily saved as `.wav` files and deleted after transcription
-- Requires microphone permissions on macOS
-- The application runs as a background listener until terminated (Ctrl+C)
+## How to Use
+
+1. Start the application with your model:
+   ```bash
+   ./parakeet --model /path/to/model
+   ```
+
+2. Wait for the "Ready!" message
+
+3. Press **Alt+Space** (default) to start recording
+   - Microphone activates only while recording (not running in background)
+   - **Hotkey is captured and won't reach other apps** (no stray spaces!)
+
+4. Speak your message
+
+5. Press **Alt+Space** again to stop recording and transcribe
+
+6. The transcribed text will be:
+   - Displayed in the terminal
+   - Saved to `transcripts/transcript_TIMESTAMP.txt`
+   - Copied to clipboard
+   - Automatically pasted at cursor position
+
+7. Press **Alt+Space** again for another recording - works immediately!
+
+## Hardware Acceleration
+
+Enable GPU acceleration by building with feature flags:
+
+```bash
+# CUDA
+cargo build --release --features cuda
+
+# TensorRT
+cargo build --release --features tensorrt
+
+# CoreML (macOS)
+cargo build --release --features coreml
+
+# DirectML (Windows)
+cargo build --release --features directml
+
+# ROCm (AMD)
+cargo build --release --features rocm
+
+# OpenVINO
+cargo build --release --features openvino
+
+# WebGPU
+cargo build --release --features webgpu
+```
+
+## Examples
+
+### English Transcription (CTC)
+```bash
+./parakeet --model ./parakeet_ctc
+```
+
+### Multilingual Transcription (TDT)
+```bash
+./parakeet --model ./parakeet_tdt --tdt
+```
+
+### Keep Audio Files
+```bash
+./parakeet --model ./model --keep-audio
+```
+
+### Custom Output Directory
+```bash
+./parakeet --model ./model --output-dir ~/my_transcripts
+```
+
+### Custom Sample Rate
+```bash
+# Use 8kHz sample rate (e.g., for phone call audio)
+./parakeet --model ./model --sample-rate 8000
+
+# Default is 16kHz (recommended for Parakeet models)
+./parakeet --model ./model --sample-rate 16000
+```
+
+## Differences from Python Version
+
+This Rust implementation offers several advantages:
+
+- **Flexible Model Support**: Specify any ONNX model path via command line
+- **Better Performance**: Native Rust with optimized ONNX Runtime
+- **Lower Memory Usage**: Efficient memory management
+- **Cross-platform**: Works on macOS, Linux, and Windows
+- **No Python Dependency**: Single binary, no runtime required
+
+## Architecture
+
+- **Audio Recording**: `cpal` for cross-platform audio capture
+- **ASR Models**: `parakeet-rs` library for ONNX inference
+- **Keyboard Hotkeys**: `rdev` for global keyboard listener
+- **Clipboard**: `arboard` for clipboard operations
+- **Notifications**: `notify-rust` for system notifications
+- **CLI**: `clap` for argument parsing
+
+## Troubleshooting
+
+### No input device found
+- Check microphone permissions in system settings
+- Ensure a microphone is connected
+
+### Model loading failed
+- Verify all required model files are present
+- Check file paths are correct
+- Ensure ONNX Runtime can access the files
+
+### Keyboard shortcuts not working
+- Check accessibility permissions (macOS)
+- Try running with administrator privileges (Windows)
+- Verify no other app is capturing the same hotkey
+
+### Transcription errors
+- Ensure audio is clear and loud enough
+- Check model compatibility with audio format
+- Try with `--keep-audio` flag to debug audio files
+
+## License
+
+This project uses the parakeet-rs library which is dual-licensed under MIT/Apache-2.0.
+
+## Credits
+
+- [parakeet-rs](https://github.com/altunenes/parakeet-rs) - Rust bindings for Parakeet
+- [NVIDIA NeMo](https://github.com/NVIDIA/NeMo) - Original Parakeet models

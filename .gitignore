@@ -3,6 +3,7 @@ archive/
 clevernote/
 transcripts/
 whisper_env/
+target/
 
 # Audio files
 *.wav
