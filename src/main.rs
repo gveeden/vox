@@ -1,3 +1,5 @@
+mod model_downloader;
+
 use arboard::Clipboard;
 use chrono::Local;
 use clap::Parser;
@@ -40,14 +42,15 @@ use cocoa::base::{id, nil, NO};
 #[command(author, version, about = "Voice transcription with Parakeet ASR", long_about = None)]
 struct Args {
     /// Path to ONNX model directory (for TDT model) or model file (for CTC model)
+    /// If not specified, defaults to "models/parakeet-tdt" and will download if missing
     #[arg(short, long)]
-    model: String,
+    model: Option<String>,
 
     /// Use TDT model (multilingual). If not set, uses CTC model (English-only)
-    #[arg(short, long, default_value_t = false)]
+    #[arg(short, long, default_value_t = true)]
     tdt: bool,
 
-    /// Output directory for transcripts
+    /// Output directory for transcripts (relative to ~/.config/clevernote/)
     #[arg(short, long, default_value = "transcripts")]
     output_dir: String,
 
@@ -176,8 +179,328 @@ fn resample_audio(audio: &[f32], source_rate: u32, target_rate: u32) -> Vec<f32>
     resampled
 }
 
+#[cfg(target_os = "macos")]
+fn check_accessibility_permissions() {
+    let exe_path = std::env::current_exe()
+        .unwrap_or_default()
+        .display()
+        .to_string();
+    
+    // Print helpful information at startup
+    eprintln!("\n📝 Starting CleverNote...");
+    eprintln!("   Binary: {}", exe_path);
+    eprintln!();
+}
+
+#[cfg(target_os = "macos")]
+fn check_and_offer_installation() -> Result<()> {
+    let home_dir = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let plist_path = format!("{}/Library/LaunchAgents/com.clevernote.parakeet.plist", home_dir);
+    let first_run_marker = format!("{}/.config/clevernote/first_run_complete", home_dir);
+    
+    // Check if we've already prompted the user (or if LaunchAgent is installed)
+    if PathBuf::from(&first_run_marker).exists() || PathBuf::from(&plist_path).exists() {
+        return Ok(());
+    }
+    
+    // Show a native macOS dialog for first run
+    let message = "CleverNote can run automatically on startup as a background service.\n\n\
+                   Benefits:\n\
+                   • Always available - no need to start manually\n\
+                   • Runs in the background - no dock icon\n\
+                   • Starts on login automatically\n\n\
+                   Would you like to install CleverNote as a background service?";
+    
+    let result = show_dialog("Welcome to CleverNote!", message, &["Install", "Skip"]);
+    
+    if result != 0 {
+        // User clicked "Skip"
+        // Create marker to not ask again
+        if let Some(parent) = PathBuf::from(&first_run_marker).parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&first_run_marker, "skipped")?;
+        
+        return Ok(());
+    }
+    
+    // User wants to install - get paths
+    let exe_path = std::env::current_exe()?;
+    let exe_path_str = exe_path.display().to_string();
+    
+    // Check if we're running from an app bundle
+    let is_app_bundle = exe_path_str.contains(".app/Contents/MacOS/");
+    let bundle_path = if is_app_bundle {
+        // Extract the .app path from the full executable path
+        if let Some(app_pos) = exe_path_str.find(".app/") {
+            exe_path_str[..app_pos + 4].to_string()
+        } else {
+            exe_path_str.clone()
+        }
+    } else {
+        exe_path_str.clone()
+    };
+    
+    let working_dir = std::env::current_dir()?;
+    let working_dir_str = working_dir.display().to_string();
+    
+    // Create the plist content with actual paths
+    // Use the bundle path if running from .app, otherwise use the executable path
+    let launch_path = if is_app_bundle {
+        // For app bundles, use 'open' command to launch properly
+        bundle_path.clone()
+    } else {
+        exe_path_str.clone()
+    };
+    
+    let plist_content = if is_app_bundle {
+        // Use 'open' command for app bundles to launch them properly
+        // Don't set WorkingDirectory - the app will set it to Resources internally
+        format!(r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.clevernote.parakeet</string>
+    
+    <key>ProgramArguments</key>
+<array>
+    <string>CleverNote.app/Contents/MacOS/CleverNote</string>
+</array>
+    
+    <key>RunAtLoad</key>
+    <true/>
+    
+    <key>KeepAlive</key>
+<dict>
+    <key>SuccessfulExit</key>
+    <false/>
+</dict>
+    
+    <key>StandardOutPath</key>
+    <string>/tmp/clevernote.log</string>
+    
+    <key>StandardErrorPath</key>
+    <string>/tmp/clevernote.err.log</string>
+    
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>
+"#)
+    } else {
+        // Direct binary execution for non-bundle builds
+        format!(r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.clevernote.parakeet</string>
+    
+    <key>ProgramArguments</key>
+    <array>
+        <string>{}</string>
+    </array>
+    
+    <key>WorkingDirectory</key>
+    <string>{}</string>
+    
+    <key>RunAtLoad</key>
+    <true/>
+    
+    <key>KeepAlive</key>
+    <true/>
+    
+    <key>StandardOutPath</key>
+    <string>/tmp/clevernote.log</string>
+    
+    <key>StandardErrorPath</key>
+    <string>/tmp/clevernote.err.log</string>
+    
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>
+"#, exe_path_str, working_dir_str)
+    };
+    
+    // Create LaunchAgents directory if it doesn't exist
+    let launch_agents_dir = format!("{}/Library/LaunchAgents", home_dir);
+    fs::create_dir_all(&launch_agents_dir)?;
+    
+    // Check if binary is code-signed
+    let is_signed = std::process::Command::new("codesign")
+        .args(&["-dv", &exe_path_str])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    
+    if !is_signed {
+        // Binary is not signed - show error and instructions
+        let sign_msg = format!(
+            "CleverNote needs to be code-signed to work with macOS Accessibility.\n\n\
+             Please run these commands in Terminal:\n\n\
+             cd {}\n\
+             cargo build --release\n\
+             codesign --force --deep --sign - ./target/release/parakeet\n\n\
+             Then run CleverNote again to complete installation.",
+            working_dir_str
+        );
+        
+        show_dialog("Code Signing Required", &sign_msg, &["OK"]);
+        
+        // Create marker to skip next time
+        if let Some(parent) = PathBuf::from(&first_run_marker).parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&first_run_marker, "needs_signing")?;
+        
+        std::process::exit(1);
+    }
+    
+    // Write the plist file
+    fs::write(&plist_path, plist_content)?;
+    
+    // Try to load the LaunchAgent
+    let output = std::process::Command::new("launchctl")
+        .args(&["load", &plist_path])
+        .output()?;
+    
+    if !output.status.success() {
+        let error = String::from_utf8_lossy(&output.stderr);
+        eprintln!("Warning: Failed to load LaunchAgent: {}", error);
+    }
+    
+    // Create marker file
+    if let Some(parent) = PathBuf::from(&first_run_marker).parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&first_run_marker, "installed")?;
+    
+    // Show accessibility permissions dialog
+    let permission_path = if is_app_bundle {
+        &bundle_path
+    } else {
+        &exe_path_str
+    };
+    
+    let permission_file = if is_app_bundle {
+        "CleverNote.app"
+    } else {
+        "parakeet"
+    };
+    
+    let permission_msg = format!(
+        "Installation complete! CleverNote is now running as a background service.\n\n\
+         IMPORTANT: Grant Accessibility permissions:\n\n\
+         1. System Settings → Privacy & Security → Accessibility\n\
+         2. Click the lock to unlock\n\
+         3. Click '+' button\n\
+         4. Press Cmd+Shift+G and paste:\n   {}\n\
+         5. Select '{}' and click Open\n\
+         6. Enable the checkbox\n\n\
+         After granting permissions, CleverNote will be ready to use!",
+        permission_path, permission_file
+    );
+    
+    show_dialog("Setup Complete", &permission_msg, &["Open System Settings"]);
+    
+    // Open System Settings
+    let _ = std::process::Command::new("open")
+        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+        .spawn();
+    
+    // Exit so the LaunchAgent can start the service
+    std::process::exit(0);
+}
+
+#[cfg(target_os = "macos")]
+fn show_dialog(title: &str, message: &str, buttons: &[&str]) -> i32 {
+    use std::process::Command;
+    
+    // Build AppleScript dialog
+    let mut script = format!(
+        "display dialog \"{}\" with title \"{}\" buttons {{",
+        message.replace("\"", "\\\""),
+        title.replace("\"", "\\\"")
+    );
+    
+    for (i, button) in buttons.iter().enumerate() {
+        if i > 0 {
+            script.push_str(", ");
+        }
+        script.push_str(&format!("\"{}\"", button.replace("\"", "\\\"")));
+    }
+    
+    script.push_str("} default button 1");
+    
+    // Run the dialog
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(&script)
+        .output();
+    
+    match output {
+        Ok(result) => {
+            if result.status.success() {
+                let output_str = String::from_utf8_lossy(&result.stdout);
+                // Check which button was clicked based on output
+                if buttons.len() > 1 && output_str.contains(buttons[1]) {
+                    return 1; // Second button clicked
+                }
+                return 0; // First button clicked
+            }
+            1 // Error or cancelled
+        }
+        Err(_) => 1, // Error
+    }
+}
+
+fn get_config_dir() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home).join(".config").join("clevernote")
+}
+
 fn main() -> Result<()> {
+    // Ensure config directory exists
+    let config_dir = get_config_dir();
+    fs::create_dir_all(&config_dir)?;
+    
+    // Set working directory to ~/.config/clevernote/
+    // This is where models, config, and transcripts will be stored
+    std::env::set_current_dir(&config_dir)?;
+    eprintln!("📂 Working directory: {}", config_dir.display());
+    
+    // Check accessibility permissions on macOS
+    #[cfg(target_os = "macos")]
+    check_accessibility_permissions();
+    
+    // Check if LaunchAgent should be installed (first launch)
+    #[cfg(target_os = "macos")]
+    check_and_offer_installation()?;
+    
     let args = Args::parse();
+
+    // Determine model path and ensure it exists
+    let model_path = match &args.model {
+        Some(path) => path.clone(),
+        None => {
+            let default_path = model_downloader::get_default_model_path();
+            default_path.to_string_lossy().to_string()
+        }
+    };
+    
+    // Check if model exists, offer to download if missing
+    let model_path = model_downloader::ensure_model_exists(&model_path, args.tdt)?;
+    let model_path_str = model_path.to_string_lossy().to_string();
+    
+    println!("📦 Using model: {}", model_path_str);
 
     // Load configuration
     let config = Config::load(&args.config_file)?;
@@ -269,7 +592,7 @@ fn main() -> Result<()> {
     // Create tray icon menu
     let tray_menu = Menu::new();
     let status_item = MenuItem::new(format!("Hotkey: {}+{}", config.modifier_key, config.trigger_key), false, None);
-    let model_item = MenuItem::new(format!("Model: {}", args.model.split('/').last().unwrap_or(&args.model)), false, None);
+    let model_item = MenuItem::new(format!("Model: {}", model_path_str.split('/').last().unwrap_or(&model_path_str)), false, None);
     
     // Hotkey configuration submenu
     let change_hotkey_item = MenuItem::new("Change Hotkey...", true, None);
@@ -307,14 +630,37 @@ fn main() -> Result<()> {
             println!("✅ Hotkey registered successfully!");
         }
         Err(e) => {
+            let exe_path = std::env::current_exe()
+                .unwrap_or_default()
+                .display()
+                .to_string();
+            
             eprintln!("❌ Failed to register hotkey: {}", e);
-            eprintln!("\n⚠️  IMPORTANT: This app needs Accessibility permissions on macOS!");
-            eprintln!("   1. Open System Preferences/Settings");
-            eprintln!("   2. Go to Security & Privacy (or Privacy & Security)");
-            eprintln!("   3. Click on 'Accessibility' in the left sidebar");
-            eprintln!("   4. Click the lock icon to make changes");
-            eprintln!("   5. Add your terminal app (Terminal.app, iTerm, etc.)");
-            eprintln!("   6. Restart this application");
+            eprintln!("\n⚠️  ACCESSIBILITY PERMISSIONS REQUIRED ⚠️");
+            eprintln!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            eprintln!();
+            eprintln!("This app needs Accessibility permissions to:");
+            eprintln!("  • Capture global hotkeys ({}+{})", config.modifier_key, config.trigger_key);
+            eprintln!("  • Paste transcribed text automatically");
+            eprintln!();
+            eprintln!("📍 IMPORTANT: Add THIS specific binary to Accessibility:");
+            eprintln!("   {}", exe_path);
+            eprintln!();
+            eprintln!("To grant permissions:");
+            eprintln!("  1. Open System Settings (or System Preferences)");
+            eprintln!("  2. Go to 'Privacy & Security' → 'Accessibility'");
+            eprintln!("  3. Click the lock icon (🔒) to unlock");
+            eprintln!("  4. Click the '+' button");
+            eprintln!("  5. Navigate to and select:");
+            eprintln!("     {}", exe_path);
+            eprintln!("  6. Ensure the checkbox next to it is enabled");
+            eprintln!("  7. Restart this app");
+            eprintln!();
+            eprintln!("Quick command to open System Settings:");
+            eprintln!("  open 'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility'");
+            eprintln!();
+            eprintln!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            eprintln!();
             return Err(e.into());
         }
     }
@@ -328,18 +674,18 @@ fn main() -> Result<()> {
 
     // Load model based on type
     let model_type = if args.tdt { "TDT" } else { "CTC" };
-    println!("📦 Loading {} model from: {}", model_type, args.model);
+    println!("📦 Loading {} model from: {}", model_type, model_path_str);
 
     // Create channel for sending transcription jobs
     let (tx, rx) = channel::<TranscriptionJob>();
 
     // NOW spawn dedicated transcription thread with loaded model
-    let model_path = args.model.clone();
+    let model_path_for_thread = model_path_str.clone();
     let use_tdt = args.tdt;
     std::thread::spawn(move || {
         // Load model once in this thread
         if use_tdt {
-            let mut parakeet = match ParakeetTDT::from_pretrained(&model_path, None) {
+            let mut parakeet = match ParakeetTDT::from_pretrained(&model_path_for_thread, None) {
                 Ok(p) => p,
                 Err(e) => {
                     eprintln!("❌ Failed to load TDT model: {}", e);
@@ -355,7 +701,7 @@ fn main() -> Result<()> {
                 }
             }
         } else {
-            let mut parakeet = match Parakeet::from_pretrained(&model_path, None) {
+            let mut parakeet = match Parakeet::from_pretrained(&model_path_for_thread, None) {
                 Ok(p) => p,
                 Err(e) => {
                     eprintln!("❌ Failed to load CTC model: {}", e);
@@ -832,50 +1178,3 @@ fn copy_and_paste(text: &str) -> Result<()> {
     println!("⌨️  Pasted text");
     Ok(())
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

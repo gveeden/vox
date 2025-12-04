@@ -27,6 +27,21 @@ cargo build --release
 
 The binary will be available at `target/release/parakeet`.
 
+### Running as a Background Service (macOS)
+
+To run CleverNote automatically on login:
+
+```bash
+./install_launchagent.sh
+```
+
+This will:
+- Build the release binary
+- Install the LaunchAgent plist
+- Start the service automatically
+
+**Important:** You must grant Accessibility permissions to the binary for hotkeys and pasting to work. See [LAUNCHAGENT_SETUP.md](LAUNCHAGENT_SETUP.md) for detailed instructions.
+
 ## Model Setup
 
 ### Option 1: CTC Model (English-only)
@@ -49,32 +64,47 @@ You can download pre-converted ONNX models or convert from NeMo format.
 
 ## Usage
 
+### Quick Start (Auto-Download TDT Model)
+
+The easiest way to get started is to just run the app without any arguments:
+
+```bash
+./parakeet
+```
+
+If no model is found, the app will offer to automatically download the TDT multilingual model (~3GB) from Hugging Face to `models/parakeet-tdt/`.
+
 ### Basic Usage (CTC Model)
 
 ```bash
 # Use model from current directory
-./parakeet --model .
+./parakeet --model . --no-tdt
 
 # Or specify a model file
-./parakeet --model /path/to/model.onnx
+./parakeet --model /path/to/model.onnx --no-tdt
 ```
 
 ### TDT Model (Multilingual)
 
 ```bash
-# Use TDT model
+# Use TDT model (default)
 ./parakeet --model /path/to/tdt_model_dir --tdt
+
+# Or just use default location (will download if missing)
+./parakeet
 ```
 
 ### Command Line Options
 
 ```
 Options:
-  -m, --model <MODEL>              Path to ONNX model directory or file [required]
-  -t, --tdt                        Use TDT model (multilingual)
+  -m, --model <MODEL>              Path to ONNX model directory or file
+                                   [default: models/parakeet-tdt, will auto-download if missing]
+  -t, --tdt                        Use TDT model (multilingual) [default: true]
   -o, --output-dir <DIR>           Output directory for transcripts [default: transcripts]
   -k, --keep-audio                 Keep audio recordings (don't delete after transcription)
   -s, --sample-rate <SAMPLE_RATE>  Audio sample rate in Hz [default: 16000]
+  -c, --config-file <FILE>         Path to config file [default: config.toml]
   -h, --help                       Print help
   -V, --version                    Print version
 ```
@@ -95,10 +125,12 @@ The application will create a default config.toml on first run if one doesn't ex
 
 ## How to Use
 
-1. Start the application with your model:
+1. Start the application:
    ```bash
-   ./parakeet --model /path/to/model
+   ./parakeet
    ```
+   
+   If no model is found, you'll be prompted to download one automatically.
 
 2. Wait for the "Ready!" message
 
