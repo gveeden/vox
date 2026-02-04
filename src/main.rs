@@ -1,4 +1,5 @@
 mod model_downloader;
+mod progress_window;
 
 use arboard::Clipboard;
 use chrono::Local;
@@ -50,7 +51,7 @@ struct Args {
     #[arg(short, long, default_value_t = true)]
     tdt: bool,
 
-    /// Output directory for transcripts (relative to ~/.config/clevernote/)
+    /// Output directory for transcripts (relative to ~/.clevernote/)
     #[arg(short, long, default_value = "transcripts")]
     output_dir: String,
 
@@ -196,7 +197,7 @@ fn check_accessibility_permissions() {
 fn check_and_offer_installation() -> Result<()> {
     let home_dir = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     let plist_path = format!("{}/Library/LaunchAgents/com.clevernote.parakeet.plist", home_dir);
-    let first_run_marker = format!("{}/.config/clevernote/first_run_complete", home_dir);
+    let first_run_marker = format!("{}/.clevernote/first_run_complete", home_dir);
     
     // Check if we've already prompted the user (or if LaunchAgent is installed)
     if PathBuf::from(&first_run_marker).exists() || PathBuf::from(&plist_path).exists() {
@@ -416,8 +417,11 @@ fn check_and_offer_installation() -> Result<()> {
         .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
         .spawn();
     
-    // Exit so the LaunchAgent can start the service
-    std::process::exit(0);
+    // Don't exit - let the app continue running so user can grant permissions
+    // The LaunchAgent will handle restarting if needed
+    println!("💡 Continuing... Grant permissions in System Settings, then the hotkey will work.");
+    
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
@@ -464,7 +468,68 @@ fn show_dialog(title: &str, message: &str, buttons: &[&str]) -> i32 {
 
 fn get_config_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".config").join("clevernote")
+    PathBuf::from(home).join(".clevernote")
+}
+
+#[cfg(target_os = "macos")]
+fn check_and_offer_move_to_applications() -> Result<()> {
+    // Check if we're running from an app bundle
+    let exe_path = std::env::current_exe()?;
+    let exe_str = exe_path.display().to_string();
+    
+    if !exe_str.contains(".app/Contents/MacOS/") {
+        return Ok(()); // Not an app bundle, skip
+    }
+    
+    // Extract the .app path
+    let app_bundle_path = if let Some(app_pos) = exe_str.find(".app/") {
+        PathBuf::from(&exe_str[..app_pos + 4])
+    } else {
+        return Ok(());
+    };
+    
+    // Check if already in /Applications
+    if app_bundle_path.starts_with("/Applications") {
+        return Ok(());
+    }
+    
+    // Check if we've already asked
+    let config_dir = get_config_dir();
+    let asked_marker = config_dir.join(".asked_move_to_applications");
+    if asked_marker.exists() {
+        return Ok(());
+    }
+    
+    // Ask user if they want to move to Applications
+    let message = format!(
+        "For the best experience, CleverNote should be installed in your Applications folder.\n\n\
+         Current location: {}\n\n\
+         Would you like to move it to /Applications now?",
+        app_bundle_path.display()
+    );
+    
+    let result = show_dialog("Move to Applications?", &message, &["Move to Applications", "Keep Here"]);
+    
+    // Mark that we've asked
+    fs::write(&asked_marker, "asked")?;
+    
+    if result == 0 {
+        // User wants to move - show instructions since we can't move ourselves
+        let instructions = format!(
+            "Please follow these steps:\n\n\
+             1. Quit CleverNote (click menu bar icon → Quit)\n\
+             2. Drag CleverNote.app to your Applications folder\n\
+             3. Launch CleverNote from Applications\n\n\
+             The app will then update its settings automatically.",
+        );
+        
+        show_dialog("How to Move", &instructions, &["OK"]);
+        
+        // Exit so user can move the app
+        std::process::exit(0);
+    }
+    
+    Ok(())
 }
 
 fn main() -> Result<()> {
@@ -472,10 +537,14 @@ fn main() -> Result<()> {
     let config_dir = get_config_dir();
     fs::create_dir_all(&config_dir)?;
     
-    // Set working directory to ~/.config/clevernote/
+    // Set working directory to ~/.clevernote/
     // This is where models, config, and transcripts will be stored
     std::env::set_current_dir(&config_dir)?;
     eprintln!("📂 Working directory: {}", config_dir.display());
+    
+    // Check if app should be moved to Applications folder
+    #[cfg(target_os = "macos")]
+    check_and_offer_move_to_applications()?;
     
     // Check accessibility permissions on macOS
     #[cfg(target_os = "macos")]
@@ -722,10 +791,36 @@ fn main() -> Result<()> {
     // Give the model loading thread a moment to load
     std::thread::sleep(std::time::Duration::from_millis(100));
 
-    // Audio setup - get device's native sample rate
+    // Audio setup - prefer internal microphone over AirPods/Bluetooth
     let host = cpal::default_host();
+    
+    // Try to find internal microphone first
     let device = host
-        .default_input_device()
+        .input_devices()
+        .ok()
+        .and_then(|devices| {
+            // Look for built-in/internal microphone
+            devices
+                .filter_map(|d| {
+                    let name = d.name().ok()?;
+                    // Prefer internal mic (avoid AirPods, Bluetooth, etc.)
+                    if name.to_lowercase().contains("built-in") 
+                        || name.to_lowercase().contains("internal") 
+                        || name.to_lowercase().contains("macbook")
+                    {
+                        Some((d, 0)) // Priority 0 (highest)
+                    } else if !name.to_lowercase().contains("airpods") 
+                        && !name.to_lowercase().contains("bluetooth")
+                    {
+                        Some((d, 1)) // Priority 1 (medium)
+                    } else {
+                        Some((d, 2)) // Priority 2 (lowest - AirPods/BT)
+                    }
+                })
+                .min_by_key(|(_, priority)| *priority)
+                .map(|(device, _)| device)
+        })
+        .or_else(|| host.default_input_device())
         .ok_or_else(|| eyre::eyre!("No input device available"))?;
     
     let default_config = device
@@ -783,9 +878,25 @@ fn main() -> Result<()> {
         _ => return Err(eyre::eyre!("Unsupported sample format")),
     };
 
-    // Don't start stream yet - will start on first recording
+    // Pre-warm the audio stream to avoid delays (especially on AirPods)
     let stream = Arc::new(Mutex::new(stream));
     let stream_for_hotkey = Arc::clone(&stream);
+    
+    // ✅ PRE-WARM: Start and immediately pause to initialize audio hardware
+    // This eliminates the ~2 second delay when first pressing the hotkey
+    println!("🔧 Pre-warming audio stream...");
+    if let Ok(stream_lock) = stream.lock() {
+        match stream_lock.play() {
+            Ok(_) => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                let _ = stream_lock.pause();
+                println!("✅ Audio stream ready (pre-warmed)");
+            }
+            Err(e) => {
+                eprintln!("⚠️  Warning: Could not pre-warm audio stream: {}", e);
+            }
+        }
+    }
     
     println!("🚀 Ready! Press {}+{} to start recording, press again to stop.", 
              config.modifier_key, config.trigger_key);
@@ -798,7 +909,12 @@ fn main() -> Result<()> {
 
     // Run the tao event loop - this is required for macOS hotkey events
     event_loop.run(move |event, _, control_flow| {
-        *control_flow = ControlFlow::Poll;
+        // Only poll continuously when recording (for animation), otherwise wait for events to save CPU
+        *control_flow = if recording_window_for_pulse.is_visible() {
+            ControlFlow::Poll
+        } else {
+            ControlFlow::Wait
+        };
         
         // Handle pulsing animation when window is visible
         if recording_window_for_pulse.is_visible() {
@@ -1178,3 +1294,12 @@ fn copy_and_paste(text: &str) -> Result<()> {
     println!("⌨️  Pasted text");
     Ok(())
 }
+
+
+
+
+
+
+
+
+

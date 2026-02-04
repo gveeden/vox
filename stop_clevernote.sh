@@ -25,4 +25,4 @@ echo "✅ CleverNote stopped"
 echo
 echo "To remove completely:"
 echo "  rm ~/Library/LaunchAgents/com.clevernote.parakeet.plist"
-echo "  rm -rf ~/.config/clevernote"
+echo "  rm -rf ~/.clevernote"

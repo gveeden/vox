@@ -37,11 +37,11 @@ echo "📋 Copying binary..."
 cp "$BINARY_SOURCE" "$MACOS/$APP_NAME"
 chmod +x "$MACOS/$APP_NAME"
 
-# Don't copy models - they will be downloaded to ~/.config/clevernote/
-echo "ℹ️  Models will be downloaded to ~/.config/clevernote/ on first run"
+# Don't copy models - they will be downloaded to ~/.clevernote/
+echo "ℹ️  Models will be downloaded to ~/.clevernote/ on first run"
 
-# Don't copy config.toml - it will be created in ~/.config/clevernote/
-echo "ℹ️  Config will be created in ~/.config/clevernote/ on first run"
+# Don't copy config.toml - it will be created in ~/.clevernote/
+echo "ℹ️  Config will be created in ~/.clevernote/ on first run"
 
 # Create Info.plist
 echo "📝 Creating Info.plist..."

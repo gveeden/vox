@@ -17,7 +17,7 @@ echo
 
 # Step 2: Clean the first-run marker so installation runs
 echo "2️⃣  Resetting installation state..."
-rm -rf ~/.config/clevernote
+#rm -rf ~/.clevernote
 echo "✅ Reset"
 echo
 

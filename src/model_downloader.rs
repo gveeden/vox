@@ -5,6 +5,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "macos")]
+use crate::progress_window::ProgressWindow;
+
+#[cfg(target_os = "macos")]
 fn show_download_dialog(message: &str) -> i32 {
     use std::process::Command;
     
@@ -48,6 +51,8 @@ fn show_info_dialog(title: &str, message: &str) {
         .arg(&script)
         .output();
 }
+
+// ProgressWindow is now defined in progress_window.rs module
 
 const HUGGINGFACE_BASE: &str = "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main";
 
@@ -152,9 +157,15 @@ fn download_tdt_model(dest_dir: &Path) -> Result<()> {
     println!("📥 Downloading TDT model files to: {}", dest_dir.display());
     println!();
     
+    // Create GUI progress window on macOS
+    #[cfg(target_os = "macos")]
+    let progress_window = ProgressWindow::new("Downloading CleverNote Models", TDT_FILES.len())?;
+    
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(300))
         .build()?;
+    
+    let mut file_index = 0;
     
     for (local_name, remote_name) in TDT_FILES {
         let url = format!("{}/{}", HUGGINGFACE_BASE, remote_name);
@@ -163,6 +174,9 @@ fn download_tdt_model(dest_dir: &Path) -> Result<()> {
         // Skip if file already exists
         if dest_path.exists() {
             println!("✓ {} (already exists)", local_name);
+            #[cfg(target_os = "macos")]
+            progress_window.update(file_index, TDT_FILES.len(), local_name, "Already exists".to_string());
+            file_index += 1;
             continue;
         }
         
@@ -174,7 +188,7 @@ fn download_tdt_model(dest_dir: &Path) -> Result<()> {
         
         let total_size = response.content_length().unwrap_or(0);
         
-        // Create progress bar
+        // Create terminal progress bar (still useful for debugging)
         let pb = if total_size > 0 {
             let pb = ProgressBar::new(total_size);
             pb.set_style(ProgressStyle::default_bar()
@@ -194,6 +208,7 @@ fn download_tdt_model(dest_dir: &Path) -> Result<()> {
         let mut downloaded: u64 = 0;
         let mut buffer = vec![0; 8192];
         let mut reader = response;
+        let mut last_gui_update = std::time::Instant::now();
         
         loop {
             use std::io::Read;
@@ -204,9 +219,41 @@ fn download_tdt_model(dest_dir: &Path) -> Result<()> {
             file.write_all(&buffer[..bytes_read])?;
             downloaded += bytes_read as u64;
             
+            // Update terminal progress bar
             if let Some(pb) = &pb {
                 pb.set_position(downloaded);
             }
+            
+            // Update GUI progress window (throttle to every 100ms)
+            #[cfg(target_os = "macos")]
+            {
+                if last_gui_update.elapsed().as_millis() > 100 {
+                    let mb_downloaded = downloaded as f64 / 1024.0 / 1024.0;
+                    let mb_total = total_size as f64 / 1024.0 / 1024.0;
+                    let progress_pct = if total_size > 0 {
+                        (downloaded as f64 / total_size as f64 * 100.0) as usize
+                    } else {
+                        0
+                    };
+                    
+                    let progress_text = if total_size > 0 {
+                        format!("{:.1}/{:.1} MB ({}%)", mb_downloaded, mb_total, progress_pct)
+                    } else {
+                        format!("{:.1} MB", mb_downloaded)
+                    };
+                    
+                    progress_window.update(file_index, TDT_FILES.len(), local_name, progress_text);
+                    last_gui_update = std::time::Instant::now();
+                }
+            }
+        }
+        
+        // Final update for this file
+        #[cfg(target_os = "macos")]
+        {
+            let mb_total = total_size as f64 / 1024.0 / 1024.0;
+            progress_window.update(file_index, TDT_FILES.len(), local_name, 
+                format!("{:.1} MB - Complete", mb_total));
         }
         
         if let Some(pb) = pb {
@@ -215,7 +262,13 @@ fn download_tdt_model(dest_dir: &Path) -> Result<()> {
         
         println!("✓ {} downloaded successfully", local_name);
         println!();
+        
+        file_index += 1;
     }
+    
+    // Close progress window
+    #[cfg(target_os = "macos")]
+    progress_window.close();
     
     // Create symlink for encoder.onnx.data if needed
     let encoder_data = dest_dir.join("encoder.onnx.data");
@@ -239,14 +292,10 @@ fn download_tdt_model(dest_dir: &Path) -> Result<()> {
 }
 
 pub fn get_default_model_path() -> PathBuf {
-    // Use ~/.config/clevernote/models/parakeet-tdt
+    // Use ~/.clevernote/models/parakeet-tdt
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
     PathBuf::from(home)
-        .join(".config")
-        .join("clevernote")
+        .join(".clevernote")
         .join("models")
         .join("parakeet-tdt")
 }
-
-
-
