@@ -1,17 +1,18 @@
-# Parakeet CLI - Voice Transcription Tool
+# CleverNote - Voice-to-Text with One Keystroke
 
-A Rust implementation of voice transcription using NVIDIA Parakeet ASR models via ONNX Runtime. Record audio with a keyboard shortcut and automatically transcribe to text.
+A fast, lightweight voice transcription tool using NVIDIA Parakeet ASR models. Press a hotkey to record, and your speech is instantly transcribed and pasted where you need it.
 
 ## Features
 
-- 🎙️ Voice recording with keyboard hotkey (Cmd+Option+Space)
-- 🤖 Support for any ONNX-format Parakeet models
-- 🌍 CTC (English-only) and TDT (multilingual, 25+ languages) models
-- 📋 Automatic clipboard copy and paste
-- 💾 Save transcripts to files
-- 🔔 Native notifications
-- ⚡ Fast inference using ONNX Runtime
-- 🖥️ Cross-platform (macOS, Linux, Windows)
+- 🎙️ **One-key recording**: Press Alt+Space to toggle recording (configurable)
+- 🤖 **Multilingual**: Supports 25+ languages via Parakeet TDT model
+- 📋 **Smart auto-paste**: Automatically detects terminals and apps for correct paste method
+- 📜 **History tracking**: Last 100 transcripts saved to `history.json` (no audio files)
+- 🔔 **Clean notifications**: Single notification while recording (Linux: notify-send)
+- ⚡ **Fast daemon mode**: Pre-loaded model for instant transcription
+- 🔒 **Privacy**: Runs 100% locally, no cloud services
+- 🖥️ **Cross-platform**: macOS, Linux (X11/Wayland), Windows
+- 🎯 **Wayland native**: Works perfectly on Hyprland, Sway, and other Wayland compositors
 
 ## Requirements
 
@@ -21,26 +22,47 @@ A Rust implementation of voice transcription using NVIDIA Parakeet ASR models vi
 
 ## Installation
 
+### Linux (Quick Install)
+
 ```bash
-cargo build --release
+git clone https://github.com/yourusername/clevernote
+cd clevernote
+chmod +x install_linux.sh
+./install_linux.sh
 ```
 
-The binary will be available at `target/release/parakeet`.
+The installer will:
+- Build the daemon and client binaries
+- Install to `~/.local/bin/`
+- Optionally set up systemd service
+- Configure compositor-specific hotkeys (Hyprland/Sway)
 
-### Running as a Background Service (macOS)
+**Default behavior (recommended)**: 
+- Text copied to clipboard via wl-copy (Wayland) or arboard (X11)
+- Auto-pasted using evdev virtual keyboard simulation
+- Smart terminal detection: Ctrl+Shift+V for terminals, Ctrl+V for other apps
+- Requires CAP_DAC_OVERRIDE capability: `sudo setcap cap_dac_override+ep ~/.local/bin/clevernote-daemon`
 
-To run CleverNote automatically on login:
+**Note**: The `auto_inject` config option has been removed. All pasting now uses the evdev method for reliability.
+
+### macOS
 
 ```bash
 ./install_launchagent.sh
 ```
 
-This will:
-- Build the release binary
-- Install the LaunchAgent plist
-- Start the service automatically
+**Important:** Grant Accessibility permissions for hotkeys and pasting. See [LAUNCHAGENT_SETUP.md](LAUNCHAGENT_SETUP.md).
 
-**Important:** You must grant Accessibility permissions to the binary for hotkeys and pasting to work. See [LAUNCHAGENT_SETUP.md](LAUNCHAGENT_SETUP.md) for detailed instructions.
+### Manual Installation
+
+```bash
+# Build daemon and client
+cargo build --release --features daemon --bin clevernote-daemon --bin clevernote
+
+# Install binaries
+cp target/release/clevernote-daemon ~/.local/bin/
+cp target/release/clevernote ~/.local/bin/
+```
 
 ## Model Setup
 
@@ -111,7 +133,7 @@ Options:
 
 ## Configuration
 
-Create a `config.toml` file to customize hotkeys:
+Configuration file: `~/.config/clevernote/config.toml`
 
 ```toml
 # Modifier key: Alt, Ctrl, Cmd, or Shift
@@ -121,34 +143,69 @@ modifier_key = "Alt"
 trigger_key = "Space"
 ```
 
-The application will create a default config.toml on first run if one doesn't exist.
+The daemon will create a default config on first run if one doesn't exist.
+
+### Linux-Specific Setup
+
+After installation, grant the daemon permission to simulate keyboard events:
+
+```bash
+sudo setcap cap_dac_override+ep ~/.local/bin/clevernote-daemon
+```
+
+This allows the daemon to access `/dev/uinput` for auto-paste functionality without running as root. The capability is only used when creating the virtual keyboard device and is dropped immediately after.
+
+### Transcript History
+
+All transcripts are saved to `~/.config/clevernote/transcripts/history.json`:
+
+```json
+{
+  "transcripts": [
+    {
+      "timestamp": "20260217_134333",
+      "text": "Your transcribed text here"
+    }
+  ]
+}
+```
+
+The last 100 transcripts are kept automatically (most recent first). Audio files are **not** saved - only transcription text is stored.
 
 ## How to Use
 
-1. Start the application:
+### Daemon Mode (Recommended)
+
+1. **Start the daemon**:
    ```bash
-   ./parakeet
+   clevernote-daemon
    ```
-   
-   If no model is found, you'll be prompted to download one automatically.
+   Or use systemd: `systemctl --user start clevernote-daemon`
 
-2. Wait for the "Ready!" message
+2. **Use the hotkey** (Alt+Space by default):
+   - **First press**: Start recording (🔴 Recording notification appears via notify-send)
+   - Speak your message
+   - **Second press**: Stop recording and transcribe
+   - Text is automatically:
+     - Copied to clipboard (wl-copy on Wayland)
+     - Pasted at cursor (Ctrl+Shift+V for terminals, Ctrl+V for other apps)
+     - Saved to history.json
 
-3. Press **Alt+Space** (default) to start recording
-   - Microphone activates only while recording (not running in background)
-   - **Hotkey is captured and won't reach other apps** (no stray spaces!)
+3. **Control with CLI**:
+   ```bash
+   clevernote toggle   # Start/stop recording
+   clevernote status   # Check daemon status
+   clevernote quit     # Stop daemon
+   ```
 
-4. Speak your message
+### Standalone Mode (No Daemon)
 
-5. Press **Alt+Space** again to stop recording and transcribe
+```bash
+# Quick transcription (parakeet CLI)
+./parakeet --model models/parakeet-tdt
+```
 
-6. The transcribed text will be:
-   - Displayed in the terminal
-   - Saved to `transcripts/transcript_TIMESTAMP.txt`
-   - Copied to clipboard
-   - Automatically pasted at cursor position
-
-7. Press **Alt+Space** again for another recording - works immediately!
+Press Alt+Space to toggle recording. Text transcribed and pasted automatically.
 
 ## Hardware Acceleration
 

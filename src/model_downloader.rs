@@ -10,17 +10,14 @@ use crate::progress_window::ProgressWindow;
 #[cfg(target_os = "macos")]
 fn show_download_dialog(message: &str) -> i32 {
     use std::process::Command;
-    
+
     let script = format!(
         "display dialog \"{}\" with title \"Download Model\" buttons {{\"Download\", \"Cancel\"}} default button \"Download\"",
         message.replace("\"", "\\\"")
     );
-    
-    let output = Command::new("osascript")
-        .arg("-e")
-        .arg(&script)
-        .output();
-    
+
+    let output = Command::new("osascript").arg("-e").arg(&script).output();
+
     match output {
         Ok(result) => {
             if result.status.success() {
@@ -39,22 +36,20 @@ fn show_download_dialog(message: &str) -> i32 {
 #[cfg(target_os = "macos")]
 fn show_info_dialog(title: &str, message: &str) {
     use std::process::Command;
-    
+
     let script = format!(
         "display dialog \"{}\" with title \"{}\" buttons {{\"OK\"}} default button \"OK\"",
         message.replace("\"", "\\\""),
         title.replace("\"", "\\\"")
     );
-    
-    let _ = Command::new("osascript")
-        .arg("-e")
-        .arg(&script)
-        .output();
+
+    let _ = Command::new("osascript").arg("-e").arg(&script).output();
 }
 
 // ProgressWindow is now defined in progress_window.rs module
 
-const HUGGINGFACE_BASE: &str = "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main";
+const HUGGINGFACE_BASE: &str =
+    "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main";
 
 const TDT_FILES: &[(&str, &str)] = &[
     ("encoder.onnx", "encoder-model.onnx"),
@@ -65,7 +60,7 @@ const TDT_FILES: &[(&str, &str)] = &[
 
 pub fn ensure_model_exists(model_path: &str, is_tdt: bool) -> Result<PathBuf> {
     let path = PathBuf::from(model_path);
-    
+
     // If path exists and has required files, return it
     if path.exists() {
         if is_tdt && check_tdt_model_complete(&path) {
@@ -76,11 +71,11 @@ pub fn ensure_model_exists(model_path: &str, is_tdt: bool) -> Result<PathBuf> {
             return Ok(path);
         }
     }
-    
+
     // If TDT model is incomplete or missing, offer to download
     if is_tdt {
         println!("⚠️  TDT model not found or incomplete at: {}", model_path);
-        
+
         // Use GUI dialog on macOS
         #[cfg(target_os = "macos")]
         {
@@ -92,12 +87,12 @@ pub fn ensure_model_exists(model_path: &str, is_tdt: bool) -> Result<PathBuf> {
                  Download now?",
                 model_path
             );
-            
+
             let result = show_download_dialog(&message);
-            
+
             if result == 0 {
                 download_tdt_model(&path)?;
-                
+
                 let success_msg = format!(
                     "Model downloaded successfully!\n\n\
                      Location: {}\n\n\
@@ -105,13 +100,15 @@ pub fn ensure_model_exists(model_path: &str, is_tdt: bool) -> Result<PathBuf> {
                     model_path
                 );
                 show_info_dialog("Download Complete", &success_msg);
-                
+
                 return Ok(path);
             } else {
-                return Err(eyre::eyre!("Model download cancelled. The app cannot run without a model."));
+                return Err(eyre::eyre!(
+                    "Model download cancelled. The app cannot run without a model."
+                ));
             }
         }
-        
+
         #[cfg(not(target_os = "macos"))]
         {
             println!("📦 Would you like to download the TDT model from Hugging Face?");
@@ -120,21 +117,23 @@ pub fn ensure_model_exists(model_path: &str, is_tdt: bool) -> Result<PathBuf> {
             println!();
             print!("Download now? [Y/n]: ");
             std::io::stdout().flush()?;
-            
+
             let mut input = String::new();
             std::io::stdin().read_line(&mut input)?;
             let input = input.trim().to_lowercase();
-            
+
             if input.is_empty() || input == "y" || input == "yes" {
                 download_tdt_model(&path)?;
                 println!("✅ TDT model downloaded successfully!");
                 return Ok(path);
             } else {
-                return Err(eyre::eyre!("Model download cancelled. Please provide a valid model path."));
+                return Err(eyre::eyre!(
+                    "Model download cancelled. Please provide a valid model path."
+                ));
             }
         }
     }
-    
+
     Ok(path)
 }
 
@@ -151,43 +150,49 @@ fn check_tdt_model_complete(path: &Path) -> bool {
 
 fn download_tdt_model(dest_dir: &Path) -> Result<()> {
     // Create directory if it doesn't exist
-    fs::create_dir_all(dest_dir)
-        .wrap_err("Failed to create model directory")?;
-    
+    fs::create_dir_all(dest_dir).wrap_err("Failed to create model directory")?;
+
     println!("📥 Downloading TDT model files to: {}", dest_dir.display());
     println!();
-    
+
     // Create GUI progress window on macOS
     #[cfg(target_os = "macos")]
     let progress_window = ProgressWindow::new("Downloading CleverNote Models", TDT_FILES.len())?;
-    
+
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(300))
         .build()?;
-    
+
     let mut file_index = 0;
-    
+
     for (local_name, remote_name) in TDT_FILES {
         let url = format!("{}/{}", HUGGINGFACE_BASE, remote_name);
         let dest_path = dest_dir.join(local_name);
-        
+
         // Skip if file already exists
         if dest_path.exists() {
             println!("✓ {} (already exists)", local_name);
             #[cfg(target_os = "macos")]
-            progress_window.update(file_index, TDT_FILES.len(), local_name, "Already exists".to_string());
+            progress_window.update(
+                file_index,
+                TDT_FILES.len(),
+                local_name,
+                "Already exists".to_string(),
+            );
             file_index += 1;
             continue;
         }
-        
+
         println!("📦 Downloading {}...", local_name);
-        
+
         // Get file size for progress bar
-        let response = client.get(&url).send()
+        let response = client
+            .get(&url)
+            .send()
             .wrap_err_with(|| format!("Failed to download {}", remote_name))?;
-        
+
         let total_size = response.content_length().unwrap_or(0);
-        
+
         // Create terminal progress bar (still useful for debugging)
         let pb = if total_size > 0 {
             let pb = ProgressBar::new(total_size);
@@ -200,16 +205,16 @@ fn download_tdt_model(dest_dir: &Path) -> Result<()> {
         } else {
             None
         };
-        
+
         // Download and write file
         let mut file = File::create(&dest_path)
             .wrap_err_with(|| format!("Failed to create file: {}", dest_path.display()))?;
-        
+
         let mut downloaded: u64 = 0;
         let mut buffer = vec![0; 8192];
         let mut reader = response;
         let mut last_gui_update = std::time::Instant::now();
-        
+
         loop {
             use std::io::Read;
             let bytes_read = reader.read(&mut buffer)?;
@@ -218,12 +223,12 @@ fn download_tdt_model(dest_dir: &Path) -> Result<()> {
             }
             file.write_all(&buffer[..bytes_read])?;
             downloaded += bytes_read as u64;
-            
+
             // Update terminal progress bar
             if let Some(pb) = &pb {
                 pb.set_position(downloaded);
             }
-            
+
             // Update GUI progress window (throttle to every 100ms)
             #[cfg(target_os = "macos")]
             {
@@ -235,67 +240,81 @@ fn download_tdt_model(dest_dir: &Path) -> Result<()> {
                     } else {
                         0
                     };
-                    
+
                     let progress_text = if total_size > 0 {
-                        format!("{:.1}/{:.1} MB ({}%)", mb_downloaded, mb_total, progress_pct)
+                        format!(
+                            "{:.1}/{:.1} MB ({}%)",
+                            mb_downloaded, mb_total, progress_pct
+                        )
                     } else {
                         format!("{:.1} MB", mb_downloaded)
                     };
-                    
+
                     progress_window.update(file_index, TDT_FILES.len(), local_name, progress_text);
                     last_gui_update = std::time::Instant::now();
                 }
             }
         }
-        
+
         // Final update for this file
         #[cfg(target_os = "macos")]
         {
             let mb_total = total_size as f64 / 1024.0 / 1024.0;
-            progress_window.update(file_index, TDT_FILES.len(), local_name, 
-                format!("{:.1} MB - Complete", mb_total));
+            progress_window.update(
+                file_index,
+                TDT_FILES.len(),
+                local_name,
+                format!("{:.1} MB - Complete", mb_total),
+            );
         }
-        
+
         if let Some(pb) = pb {
             pb.finish_with_message(format!("✓ {} downloaded", local_name));
         }
-        
+
         println!("✓ {} downloaded successfully", local_name);
         println!();
-        
+
         file_index += 1;
     }
-    
+
     // Close progress window
     #[cfg(target_os = "macos")]
     progress_window.close();
-    
+
     // Create symlink for encoder.onnx.data if needed
     let encoder_data = dest_dir.join("encoder.onnx.data");
     let encoder_model_data = dest_dir.join("encoder-model.onnx.data");
-    
+
     if !encoder_data.exists() && encoder_model_data.exists() {
         #[cfg(unix)]
         {
             std::os::unix::fs::symlink("encoder-model.onnx.data", &encoder_data)?;
             println!("✓ Created symlink for encoder.onnx.data");
         }
-        
+
         #[cfg(windows)]
         {
             std::os::windows::fs::symlink_file(&encoder_model_data, &encoder_data)?;
             println!("✓ Created symlink for encoder.onnx.data");
         }
     }
-    
+
     Ok(())
 }
 
 pub fn get_default_model_path() -> PathBuf {
-    // Use ~/.clevernote/models/parakeet-tdt
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home)
-        .join(".clevernote")
+    // Use ~/.config/clevernote/models/parakeet-tdt
+    // Inline the config dir logic to avoid import issues
+    let config_home = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        PathBuf::from(home)
+            .join(".config")
+            .to_string_lossy()
+            .to_string()
+    });
+    PathBuf::from(config_home)
+        .join("clevernote")
         .join("models")
         .join("parakeet-tdt")
 }

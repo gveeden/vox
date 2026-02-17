@@ -1,0 +1,20 @@
+[Unit]
+Description=CleverNote Voice Transcription Daemon
+After=sound.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/clevernote-daemon
+Restart=on-failure
+RestartSec=5s
+
+# Environment
+Environment="RUST_LOG=info"
+
+# Resource limits
+Nice=-5
+IOSchedulingClass=realtime
+IOSchedulingPriority=0
+
+[Install]
+WantedBy=default.target

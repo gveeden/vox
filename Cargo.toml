@@ -3,9 +3,22 @@ name = "parakeet-cli"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "clevernote"
+path = "src/lib.rs"
+
 [[bin]]
 name = "parakeet"
 path = "src/main.rs"
+
+[[bin]]
+name = "clevernote-daemon"
+path = "src/bin/daemon.rs"
+required-features = ["daemon"]
+
+[[bin]]
+name = "clevernote"
+path = "src/bin/client.rs"
 
 [dependencies]
 parakeet-rs = { path = "../parakeet-rs" }
@@ -19,11 +32,25 @@ enigo = "0.2"
 global-hotkey = "0.7"
 ctrlc = "3.4"
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 toml = "0.8"
 tao = { version = "0.34.5", default-features = false }
 tray-icon = "0.19"
 reqwest = { version = "0.12", features = ["blocking"] }
 indicatif = "0.17"
+tokio = { version = "1", features = ["full"], optional = true }
+log = "0.4"
+env_logger = "0.11"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+evdev = "0.12"
+caps = "0.5"
+xkbcommon = "0.7"
+wayland-client = "0.31"
+wayland-protocols = { version = "0.31", features = ["unstable", "client"] }
+wayland-protocols-misc = { version = "0.2", features = ["client"] }
+memmap2 = "0.9"
+tempfile = "3.8"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"
@@ -32,11 +59,12 @@ objc = "0.2"
 [features]
 default = ["cpu"]
 cpu = []
+daemon = ["tokio"]
 cuda = ["parakeet-rs/cuda"]
 tensorrt = ["parakeet-rs/tensorrt"]
 coreml = ["parakeet-rs/coreml"]
 directml = ["parakeet-rs/directml"]
-rocm = ["parakeet-rs/rocm"]
+migraphx = ["parakeet-rs/migraphx"]
 openvino = ["parakeet-rs/openvino"]
 webgpu = ["parakeet-rs/webgpu"]
 
