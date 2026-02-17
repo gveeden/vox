@@ -4,6 +4,7 @@ pub mod clipboard;
 pub mod inject_linux;
 pub mod ipc;
 pub mod model_downloader;
+pub mod models;
 pub mod progress_window;
 pub mod recording_overlay;
 
@@ -20,6 +21,11 @@ pub fn get_config_dir() -> PathBuf {
             .to_string()
     });
     PathBuf::from(config_home).join("clevernote")
+}
+
+/// Get the models directory (~/.config/clevernote/models/)
+pub fn get_models_dir() -> PathBuf {
+    get_config_dir().join("models")
 }
 
 /// Convert stereo (or multi-channel) audio to mono by averaging channels

@@ -41,6 +41,7 @@ indicatif = "0.17"
 tokio = { version = "1", features = ["full"], optional = true }
 log = "0.4"
 env_logger = "0.11"
+anyhow = "1.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 evdev = "0.12"
@@ -51,6 +52,7 @@ wayland-protocols = { version = "0.31", features = ["unstable", "client"] }
 wayland-protocols-misc = { version = "0.2", features = ["client"] }
 memmap2 = "0.9"
 tempfile = "3.8"
+nix = { version = "0.28", features = ["fs"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"

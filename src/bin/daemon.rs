@@ -29,6 +29,8 @@ struct DaemonConfig {
     trigger_key: String,
     #[serde(default = "default_auto_inject")]
     auto_inject: bool,
+    #[serde(default = "default_active_model")]
+    active_model: String,
 }
 
 fn default_modifier_key() -> String {
@@ -43,12 +45,17 @@ fn default_auto_inject() -> bool {
     false
 }
 
+fn default_active_model() -> String {
+    "parakeet-tdt-0.6b-v3-int8".to_string()
+}
+
 impl Default for DaemonConfig {
     fn default() -> Self {
         Self {
             modifier_key: default_modifier_key(),
             trigger_key: default_trigger_key(),
             auto_inject: default_auto_inject(),
+            active_model: default_active_model(),
         }
     }
 }
@@ -65,6 +72,12 @@ impl DaemonConfig {
             fs::write(path, toml_string)?;
             Ok(config)
         }
+    }
+
+    fn save(&self, path: &PathBuf) -> Result<()> {
+        let toml_string = toml::to_string_pretty(&self)?;
+        fs::write(path, toml_string)?;
+        Ok(())
     }
 }
 
@@ -125,26 +138,32 @@ struct DaemonState {
     start_time: Instant,
     shutdown: AtomicBool,
     overlay_close_handle: std::sync::Mutex<Option<Arc<AtomicBool>>>,
+    active_model: std::sync::Mutex<String>,
+    config_path: PathBuf,
 }
 
 impl DaemonState {
-    fn new() -> Self {
+    fn new(active_model: String, config_path: PathBuf) -> Self {
         Self {
             model_loaded: AtomicBool::new(false),
             recordings_processed: AtomicU64::new(0),
             start_time: Instant::now(),
             shutdown: AtomicBool::new(false),
             overlay_close_handle: std::sync::Mutex::new(None),
+            active_model: std::sync::Mutex::new(active_model),
+            config_path,
         }
     }
 
     fn status(&self, audio_capture: &AudioCapture) -> DaemonStatus {
         let is_recording = audio_capture.state.lock().unwrap().is_recording;
+        let active_model = self.active_model.lock().unwrap().clone();
         DaemonStatus {
             is_recording,
             uptime_seconds: self.start_time.elapsed().as_secs(),
             model_loaded: self.model_loaded.load(Ordering::Relaxed),
             recordings_processed: self.recordings_processed.load(Ordering::Relaxed),
+            active_model: Some(active_model),
         }
     }
 }
@@ -164,17 +183,32 @@ fn main() -> Result<()> {
     // Load config
     let config_path = config_dir.join("config.toml");
     let config = DaemonConfig::load(&config_path)?;
-    info!("⚙️  Config loaded: auto_inject={}", config.auto_inject);
+    info!(
+        "⚙️  Config loaded: auto_inject={}, active_model={}",
+        config.auto_inject, config.active_model
+    );
 
-    // Change to config directory
-    std::env::set_current_dir(&config_dir)?;
+    // Get models directory
+    let models_dir = clevernote::get_models_dir();
+    fs::create_dir_all(&models_dir)?;
 
-    // Default model path
-    let model_path = "models/parakeet-tdt";
+    // Copy default model registry to config dir if it doesn't exist
+    // This allows users to edit models.json at runtime
+    match clevernote::models::ModelRegistry::copy_default_to_config() {
+        Ok(path) => info!("Model registry available at: {:?}", path),
+        Err(e) => warn!("Failed to copy model registry: {}", e),
+    }
 
-    // Ensure model exists (download if needed)
-    info!("Checking for model...");
-    let model_path = model_downloader::ensure_model_exists(model_path, true)?;
+    // Ensure active model is downloaded
+    info!("Checking for model '{}'...", config.active_model);
+    let model_path =
+        match clevernote::models::ensure_model_downloaded(&config.active_model, &models_dir, false)
+        {
+            Ok(path) => path,
+            Err(e) => {
+                return Err(eyre::eyre!("Failed to ensure model is downloaded: {}", e));
+            }
+        };
     info!("Model found at: {}", model_path.display());
 
     // Create output directory
@@ -197,7 +231,10 @@ fn main() -> Result<()> {
     let (tx, rx) = std::sync::mpsc::channel::<TranscriptionJob>();
 
     // Daemon state
-    let daemon_state = Arc::new(DaemonState::new());
+    let daemon_state = Arc::new(DaemonState::new(
+        config.active_model.clone(),
+        config_path.clone(),
+    ));
     let daemon_state_clone = daemon_state.clone();
 
     // Spawn transcription thread
@@ -317,6 +354,9 @@ fn handle_client(
             daemon_state.shutdown.store(true, Ordering::Relaxed);
             Response::Success(SuccessResponse::Shutdown)
         }
+        Command::ListModels => handle_list_models(daemon_state),
+        Command::ModelInfo { model_id } => handle_model_info(&model_id, daemon_state),
+        Command::SetModel { model_id } => handle_set_model(&model_id, daemon_state),
     };
 
     // Send response
@@ -424,6 +464,112 @@ fn handle_toggle(
             daemon_state,
         )
     }
+}
+
+fn handle_list_models(daemon_state: &Arc<DaemonState>) -> Response {
+    use clevernote::models::ModelRegistry;
+
+    let registry = match ModelRegistry::load() {
+        Ok(r) => r,
+        Err(e) => return Response::Error(format!("Failed to load model registry: {}", e)),
+    };
+
+    let models_dir = clevernote::get_models_dir();
+    let active_model = daemon_state.active_model.lock().unwrap().clone();
+
+    let model_infos: Vec<ipc::ModelInfo> = registry
+        .list_models()
+        .iter()
+        .map(|m| ipc::ModelInfo {
+            id: m.id.clone(),
+            name: m.name.clone(),
+            description: m.description.clone(),
+            quantization: m.quantization.clone(),
+            size_mb: m.size_mb,
+            downloaded: registry.is_model_downloaded(&m.id, &models_dir),
+            active: m.id == active_model,
+        })
+        .collect();
+
+    Response::Success(SuccessResponse::ModelList {
+        models: model_infos,
+    })
+}
+
+fn handle_model_info(model_id: &str, daemon_state: &Arc<DaemonState>) -> Response {
+    use clevernote::models::ModelRegistry;
+
+    let registry = match ModelRegistry::load() {
+        Ok(r) => r,
+        Err(e) => return Response::Error(format!("Failed to load model registry: {}", e)),
+    };
+
+    let model = match registry.get_model(model_id) {
+        Some(m) => m,
+        None => return Response::Error(format!("Model '{}' not found", model_id)),
+    };
+
+    let models_dir = clevernote::get_models_dir();
+    let active_model = daemon_state.active_model.lock().unwrap().clone();
+
+    let info = ipc::ModelInfo {
+        id: model.id.clone(),
+        name: model.name.clone(),
+        description: model.description.clone(),
+        quantization: model.quantization.clone(),
+        size_mb: model.size_mb,
+        downloaded: registry.is_model_downloaded(&model.id, &models_dir),
+        active: model.id == active_model,
+    };
+
+    Response::Success(SuccessResponse::ModelInfo { info })
+}
+
+fn handle_set_model(model_id: &str, daemon_state: &Arc<DaemonState>) -> Response {
+    use clevernote::models::ModelRegistry;
+
+    let registry = match ModelRegistry::load() {
+        Ok(r) => r,
+        Err(e) => return Response::Error(format!("Failed to load model registry: {}", e)),
+    };
+
+    // Check if model exists in registry
+    if registry.get_model(model_id).is_none() {
+        return Response::Error(format!("Model '{}' not found in registry", model_id));
+    }
+
+    // Check if model is downloaded
+    let models_dir = clevernote::get_models_dir();
+    if !registry.is_model_downloaded(model_id, &models_dir) {
+        return Response::Error(format!(
+            "Model '{}' is not downloaded. Run 'clevernote model pull {}' first.",
+            model_id, model_id
+        ));
+    }
+
+    // Update config
+    let mut config = match DaemonConfig::load(&daemon_state.config_path) {
+        Ok(c) => c,
+        Err(e) => return Response::Error(format!("Failed to load config: {}", e)),
+    };
+
+    config.active_model = model_id.to_string();
+
+    if let Err(e) = config.save(&daemon_state.config_path) {
+        return Response::Error(format!("Failed to save config: {}", e));
+    }
+
+    // Update daemon state
+    *daemon_state.active_model.lock().unwrap() = model_id.to_string();
+
+    info!("Model set to '{}'. Initiating daemon restart...", model_id);
+
+    // Trigger shutdown (systemd will auto-restart)
+    daemon_state.shutdown.store(true, Ordering::Relaxed);
+
+    Response::Success(SuccessResponse::ModelSet {
+        model_id: model_id.to_string(),
+    })
 }
 
 fn transcription_worker(

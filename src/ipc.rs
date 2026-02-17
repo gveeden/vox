@@ -15,6 +15,12 @@ pub enum Command {
     Status,
     /// Gracefully shut down the daemon
     Quit,
+    /// List available models
+    ListModels,
+    /// Get information about a specific model
+    ModelInfo { model_id: String },
+    /// Set the active model (requires daemon restart)
+    SetModel { model_id: String },
 }
 
 /// Responses sent from daemon to client
@@ -40,6 +46,12 @@ pub enum SuccessResponse {
     Status(DaemonStatus),
     /// Daemon shutting down
     Shutdown,
+    /// List of available models
+    ModelList { models: Vec<ModelInfo> },
+    /// Information about a specific model
+    ModelInfo { info: ModelInfo },
+    /// Model set successfully (daemon will restart)
+    ModelSet { model_id: String },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -48,6 +60,18 @@ pub struct DaemonStatus {
     pub uptime_seconds: u64,
     pub model_loaded: bool,
     pub recordings_processed: u64,
+    pub active_model: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelInfo {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub quantization: String,
+    pub size_mb: u64,
+    pub downloaded: bool,
+    pub active: bool,
 }
 
 /// Get the socket path for daemon communication
