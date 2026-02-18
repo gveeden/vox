@@ -8,6 +8,3 @@ target/
 # Audio files
 *.wav
 .DS_Store
-
-models/
-sherpa

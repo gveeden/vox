@@ -1,0 +1,277 @@
+{
+  "models": [
+    {
+      "id": "parakeet-tdt-0.6b-v3",
+      "name": "Parakeet TDT 0.6B v3",
+      "description": "NVIDIA Parakeet TDT 0.6B v3 - High accuracy speech recognition model (FP32)",
+      "repository": "istupakov/parakeet-tdt-0.6b-v3-onnx",
+      "backend": "parakeet",
+      "quantization": "fp32",
+      "model_type": "multi-file",
+      "size_mb": 2400,
+      "files": [
+        {
+          "url": "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main/encoder-model.onnx",
+          "filename": "encoder-model.onnx"
+        },
+        {
+          "url": "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main/encoder-model.onnx.data",
+          "filename": "encoder-model.onnx.data"
+        },
+        {
+          "url": "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main/decoder_joint-model.onnx",
+          "filename": "decoder_joint-model.onnx"
+        },
+        {
+          "url": "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main/vocab.txt",
+          "filename": "vocab.txt"
+        }
+      ]
+    },
+    {
+      "id": "parakeet-tdt-0.6b-v3-int8",
+      "name": "Parakeet TDT 0.6B v3 INT8",
+      "description": "NVIDIA Parakeet TDT 0.6B v3 - Quantized for faster inference (INT8)",
+      "repository": "nasedkinpv/parakeet-tdt-0.6b-v3-onnx-int8",
+      "backend": "parakeet",
+      "quantization": "int8",
+      "model_type": "multi-file",
+      "size_mb": 900,
+      "default": true,
+      "files": [
+        {
+          "url": "https://huggingface.co/nasedkinpv/parakeet-tdt-0.6b-v3-onnx-int8/resolve/main/encoder-int8.onnx",
+          "filename": "encoder-int8.onnx"
+        },
+        {
+          "url": "https://huggingface.co/nasedkinpv/parakeet-tdt-0.6b-v3-onnx-int8/resolve/main/encoder-int8.onnx.data",
+          "filename": "encoder-int8.onnx.data"
+        },
+        {
+          "url": "https://huggingface.co/nasedkinpv/parakeet-tdt-0.6b-v3-onnx-int8/resolve/main/decoder_joint-int8.onnx",
+          "filename": "decoder_joint-int8.onnx"
+        },
+        {
+          "url": "https://huggingface.co/nasedkinpv/parakeet-tdt-0.6b-v3-onnx-int8/resolve/main/vocab.txt",
+          "filename": "vocab.txt"
+        }
+      ]
+    },
+    {
+      "id": "moonshine-tiny",
+      "name": "Moonshine Tiny",
+      "description": "Moonshine Tiny - Fast streaming ASR with learned frontend (27M params)",
+      "repository": "onnx-community/moonshine-tiny-ONNX",
+      "backend": "moonshine",
+      "quantization": "fp32",
+      "model_type": "multi-file",
+      "size_mb": 110,
+      "files": [
+        {
+          "url": "https://huggingface.co/onnx-community/moonshine-tiny-ONNX/resolve/main/onnx/encoder_model.onnx",
+          "filename": "encoder.onnx"
+        },
+        {
+          "url": "https://huggingface.co/onnx-community/moonshine-tiny-ONNX/resolve/main/onnx/decoder_model_merged.onnx",
+          "filename": "decoder.onnx"
+        },
+        {
+          "url": "https://huggingface.co/onnx-community/moonshine-tiny-ONNX/resolve/main/tokenizer.json",
+          "filename": "tokenizer.json"
+        }
+      ]
+    },
+    {
+      "id": "moonshine-base",
+      "name": "Moonshine Base",
+      "description": "Moonshine Base - Better accuracy with streaming ASR (61M params)",
+      "repository": "onnx-community/moonshine-base-ONNX",
+      "backend": "moonshine",
+      "quantization": "fp32",
+      "model_type": "multi-file",
+      "size_mb": 245,
+      "files": [
+        {
+          "url": "https://huggingface.co/onnx-community/moonshine-base-ONNX/resolve/main/onnx/encoder_model.onnx",
+          "filename": "encoder.onnx"
+        },
+        {
+          "url": "https://huggingface.co/onnx-community/moonshine-base-ONNX/resolve/main/onnx/decoder_model_merged.onnx",
+          "filename": "decoder.onnx"
+        },
+        {
+          "url": "https://huggingface.co/onnx-community/moonshine-base-ONNX/resolve/main/tokenizer.json",
+          "filename": "tokenizer.json"
+        }
+      ]
+    },
+    {
+      "id": "sensevoice-small",
+      "name": "SenseVoice Small",
+      "description": "Multilingual speech recognition with emotion detection (encoder only)",
+      "repository": "lovemefan/SenseVoice-onnx",
+      "backend": "sensevoice",
+      "quantization": "fp32",
+      "model_type": "single-file",
+      "size_mb": 937,
+      "files": [
+        {
+          "url": "https://huggingface.co/lovemefan/SenseVoice-onnx/resolve/main/sense-voice-encoder.onnx",
+          "filename": "model.onnx"
+        },
+        {
+          "url": "https://huggingface.co/lovemefan/SenseVoice-onnx/resolve/main/chn_jpn_yue_eng_ko_spectok.bpe.model",
+          "filename": "tokenizer.model"
+        },
+        {
+          "url": "https://huggingface.co/lovemefan/SenseVoice-onnx/resolve/main/am.mvn",
+          "filename": "am.mvn"
+        },
+        {
+          "url": "https://huggingface.co/lovemefan/SenseVoice-onnx/resolve/main/embedding.npy",
+          "filename": "embedding.npy"
+        }
+      ]
+    },
+    {
+      "id": "whisper-tiny",
+      "name": "Whisper Tiny",
+      "description": "OpenAI Whisper Tiny - Fast multilingual speech recognition (39M params)",
+      "repository": "onnx-community/whisper-tiny-ONNX",
+      "backend": "whisper",
+      "quantization": "fp32",
+      "model_type": "multi-file",
+      "size_mb": 150,
+      "files": [
+        {
+          "url": "https://huggingface.co/onnx-community/whisper-tiny-ONNX/resolve/main/onnx/encoder_model.onnx",
+          "filename": "encoder.onnx"
+        },
+        {
+          "url": "https://huggingface.co/onnx-community/whisper-tiny-ONNX/resolve/main/onnx/decoder_model_merged.onnx",
+          "filename": "decoder.onnx"
+        },
+        {
+          "url": "https://huggingface.co/onnx-community/whisper-tiny-ONNX/resolve/main/vocab.json",
+          "filename": "vocab.json"
+        }
+      ]
+    },
+    {
+      "id": "whisper-base",
+      "name": "Whisper Base",
+      "description": "OpenAI Whisper Base - Balanced speed and accuracy (74M params)",
+      "repository": "onnx-community/whisper-base-ONNX",
+      "backend": "whisper",
+      "quantization": "fp32",
+      "model_type": "multi-file",
+      "size_mb": 290,
+      "files": [
+        {
+          "url": "https://huggingface.co/onnx-community/whisper-base-ONNX/resolve/main/onnx/encoder_model.onnx",
+          "filename": "encoder.onnx"
+        },
+        {
+          "url": "https://huggingface.co/onnx-community/whisper-base-ONNX/resolve/main/onnx/decoder_model_merged.onnx",
+          "filename": "decoder.onnx"
+        },
+        {
+          "url": "https://huggingface.co/onnx-community/whisper-base-ONNX/resolve/main/vocab.json",
+          "filename": "vocab.json"
+        },
+        {
+          "url": "https://huggingface.co/onnx-community/whisper-base-ONNX/resolve/main/tokenizer.json",
+          "filename": "tokenizer.json"
+        }
+      ]
+    },
+    {
+      "id": "whisper-small",
+      "name": "Whisper Small",
+      "description": "OpenAI Whisper Small - Good accuracy (244M params)",
+      "repository": "onnx-community/whisper-small-ONNX",
+      "backend": "whisper",
+      "quantization": "fp32",
+      "model_type": "multi-file",
+      "size_mb": 970,
+      "files": [
+        {
+          "url": "https://huggingface.co/onnx-community/whisper-small-ONNX/resolve/main/onnx/encoder_model.onnx",
+          "filename": "encoder.onnx"
+        },
+        {
+          "url": "https://huggingface.co/onnx-community/whisper-small-ONNX/resolve/main/onnx/decoder_model_merged.onnx",
+          "filename": "decoder.onnx"
+        },
+        {
+          "url": "https://huggingface.co/onnx-community/whisper-small-ONNX/resolve/main/vocab.json",
+          "filename": "vocab.json"
+        },
+        {
+          "url": "https://huggingface.co/onnx-community/whisper-small-ONNX/resolve/main/tokenizer.json",
+          "filename": "tokenizer.json"
+        }
+      ]
+    },
+    {
+      "id": "whisper-medium",
+      "name": "Whisper Medium",
+      "description": "OpenAI Whisper Medium - High accuracy (769M params)",
+      "repository": "onnx-community/whisper-medium-ONNX",
+      "backend": "whisper",
+      "quantization": "fp32",
+      "model_type": "multi-file",
+      "size_mb": 3080,
+      "files": [
+        {
+          "url": "https://huggingface.co/onnx-community/whisper-medium-ONNX/resolve/main/onnx/encoder_model.onnx",
+          "filename": "encoder.onnx"
+        },
+        {
+          "url": "https://huggingface.co/onnx-community/whisper-medium-ONNX/resolve/main/onnx/decoder_model_merged.onnx",
+          "filename": "decoder.onnx"
+        },
+        {
+          "url": "https://huggingface.co/onnx-community/whisper-medium-ONNX/resolve/main/vocab.json",
+          "filename": "vocab.json"
+        },
+        {
+          "url": "https://huggingface.co/onnx-community/whisper-medium-ONNX/resolve/main/tokenizer.json",
+          "filename": "tokenizer.json"
+        }
+      ]
+    },
+    {
+      "id": "whisper-large-v3-turbo",
+      "name": "Whisper Large V3 Turbo",
+      "description": "OpenAI Whisper Large V3 Turbo - Fastest large model with timestamps (809M params)",
+      "repository": "onnx-community/whisper-large-v3-turbo_timestamped",
+      "backend": "whisper",
+      "quantization": "fp32",
+      "model_type": "multi-file",
+      "size_mb": 3920,
+      "files": [
+        {
+          "url": "https://huggingface.co/onnx-community/whisper-large-v3-turbo_timestamped/resolve/main/onnx/encoder_model.onnx",
+          "filename": "encoder_model.onnx"
+        },
+        {
+          "url": "https://huggingface.co/onnx-community/whisper-large-v3-turbo_timestamped/resolve/main/onnx/decoder_model_merged.onnx",
+          "filename": "decoder_model_merged.onnx"
+        },
+        {
+          "url": "https://huggingface.co/onnx-community/whisper-large-v3-turbo_timestamped/resolve/main/onnx/encoder_model.onnx_data",
+          "filename": "encoder_model.onnx_data"
+        },
+        {
+          "url": "https://huggingface.co/onnx-community/whisper-large-v3-turbo_timestamped/resolve/main/vocab.json",
+          "filename": "vocab.json"
+        },
+        {
+          "url": "https://huggingface.co/onnx-community/whisper-large-v3-turbo_timestamped/resolve/main/tokenizer.json",
+          "filename": "tokenizer.json"
+        }
+      ]
+    }
+  ]
+}

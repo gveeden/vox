@@ -4,11 +4,10 @@ use clevernote::{
     audio::AudioCapture,
     clipboard, convert_to_mono, get_config_dir,
     ipc::{self, Command, DaemonStatus, Response, SuccessResponse},
-    model_downloader, resample_audio,
+    model_downloader,
 };
 use eyre::{Result, WrapErr};
 use log::{error, info, warn};
-use parakeet_rs::{ParakeetTDT, TimestampMode, Transcriber};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -127,7 +126,6 @@ struct TranscriptionJob {
     audio_data: Vec<f32>,
     device_sample_rate: u32,
     device_channels: u16,
-    target_sample_rate: u32,
     output_dir: PathBuf,
     auto_inject: bool,
 }
@@ -239,8 +237,9 @@ fn main() -> Result<()> {
 
     // Spawn transcription thread
     info!("Loading transcription model...");
+    let model_id = config.active_model.clone();
     thread::spawn(move || {
-        if let Err(e) = transcription_worker(rx, model_path, daemon_state_clone) {
+        if let Err(e) = transcription_worker(rx, model_path, model_id, daemon_state_clone) {
             error!("Transcription worker error: {}", e);
         }
     });
@@ -426,7 +425,6 @@ fn handle_stop(
         audio_data,
         device_sample_rate,
         device_channels,
-        target_sample_rate: 16000, // Parakeet expects 16kHz
         output_dir: output_dir.clone(),
         auto_inject,
     };
@@ -575,17 +573,52 @@ fn handle_set_model(model_id: &str, daemon_state: &Arc<DaemonState>) -> Response
 fn transcription_worker(
     rx: std::sync::mpsc::Receiver<TranscriptionJob>,
     model_path: PathBuf,
+    model_id: String,
     daemon_state: Arc<DaemonState>,
 ) -> Result<()> {
-    // Load model once
-    info!("Loading Parakeet TDT model from: {}", model_path.display());
-    let mut parakeet = ParakeetTDT::from_pretrained(&model_path, None)?;
+    use clevernote::models::backends::create_backend;
+
+    // Load registry to get backend type from model definition
+    let registry = clevernote::models::ModelRegistry::load()
+        .map_err(|e| eyre::eyre!("Failed to load model registry: {}", e))?;
+    let backend_type = if let Some(model) = registry.get_model(&model_id) {
+        model.backend.clone()
+    } else {
+        // Fallback to auto-detection if model not in registry
+        use clevernote::models::backends::factory::detect_backend_type;
+        match detect_backend_type(&model_path) {
+            Ok(t) => t,
+            Err(e) => {
+                error!("Failed to detect backend type: {}", e);
+                return Err(eyre::eyre!(
+                    "Cannot determine model type for: {}",
+                    model_path.display()
+                ));
+            }
+        }
+    };
+
+    info!(
+        "Loading {} model from: {}",
+        backend_type,
+        model_path.display()
+    );
+
+    // Create the appropriate backend
+    let mut backend = match create_backend(&model_path, &backend_type) {
+        Ok(b) => b,
+        Err(e) => {
+            error!("Failed to create backend: {}", e);
+            return Err(eyre::eyre!("Failed to load model: {}", e));
+        }
+    };
+
     daemon_state.model_loaded.store(true, Ordering::Relaxed);
-    info!("Model loaded and ready");
+    info!("Model '{}' loaded and ready", backend.model_name());
 
     // Process jobs
     while let Ok(job) = rx.recv() {
-        if let Err(e) = process_transcription(&mut parakeet, job, &daemon_state) {
+        if let Err(e) = process_transcription_with_backend(&mut *backend, job, &daemon_state) {
             error!("Transcription error: {}", e);
         }
     }
@@ -593,42 +626,31 @@ fn transcription_worker(
     Ok(())
 }
 
-fn process_transcription(
-    parakeet: &mut ParakeetTDT,
+fn process_transcription_with_backend(
+    backend: &mut dyn clevernote::models::backends::TranscriptionBackend,
     job: TranscriptionJob,
     daemon_state: &Arc<DaemonState>,
 ) -> Result<()> {
     let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
 
-    // Convert to mono if needed (Parakeet expects mono)
+    // Convert to mono if needed
     info!(
         "Converting audio: {} channels -> 1 channel (mono)",
         job.device_channels
     );
     let mono_audio = convert_to_mono(&job.audio_data, job.device_channels);
 
-    // Resample if needed (Parakeet expects 16kHz)
-    info!(
-        "Resampling audio: {}Hz -> {}Hz",
-        job.device_sample_rate, job.target_sample_rate
-    );
-    let resampled_audio =
-        resample_audio(&mono_audio, job.device_sample_rate, job.target_sample_rate);
-
     // Transcribe
-    info!("🤖 Transcribing...");
+    info!("🤖 Transcribing with {}...", backend.backend_type());
     let start = Instant::now();
 
-    let result = parakeet.transcribe_samples(
-        resampled_audio,
-        job.target_sample_rate,
-        1, // mono
-        Some(TimestampMode::Sentences),
-    )?;
+    let text = backend
+        .transcribe(&mono_audio, job.device_sample_rate)
+        .map_err(|e| eyre::eyre!("Transcription failed: {}", e))?;
 
     let elapsed = start.elapsed();
     info!("✅ Transcription complete in {:.2}s", elapsed.as_secs_f32());
-    info!("📝 Text: {}", result.text);
+    info!("📝 Text: {}", text);
 
     // Add to history.json (keep last 100)
     let history_path = job.output_dir.join("history.json");
@@ -636,7 +658,7 @@ fn process_transcription(
 
     let record = TranscriptRecord {
         timestamp: timestamp.clone(),
-        text: result.text.clone(),
+        text: text.clone(),
     };
 
     history.add_transcript(record);
@@ -647,7 +669,7 @@ fn process_transcription(
     );
 
     // Copy to clipboard and optionally inject
-    if let Err(e) = clipboard::copy_and_paste(&result.text, job.auto_inject) {
+    if let Err(e) = clipboard::copy_and_paste(&text, job.auto_inject) {
         warn!("Failed to copy: {}", e);
     }
 
