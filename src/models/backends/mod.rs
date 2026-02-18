@@ -26,6 +26,5 @@ pub mod parakeet;
 pub mod sensevoice;
 pub mod tokenizers;
 pub mod whisper;
-pub mod whisper_decoder_layers;
 
 pub use factory::create_backend;

@@ -1,11 +1,39 @@
 use anyhow::{anyhow, Result};
-use ndarray::{arr1, Array1, Array2, Array3, Array4, ArrayView3, Axis};
+use ndarray::{Array2, Array3, Axis};
 use ort::session::Session;
-use ort::value::Value;
-use std::collections::HashMap;
+use ort::tensor::TensorElementType;
+use ort::value::{Value, ValueType};
 use std::path::Path;
 
-use super::{audio, whisper_decoder_layers, TranscriptionBackend};
+use super::{audio, TranscriptionBackend};
+
+/// Classification of a single decoder input slot, derived from the ONNX model schema.
+#[derive(Debug, Clone)]
+enum DecoderInputKind {
+    InputIds,
+    EncoderHidden,
+    DecoderKV,
+    EncoderKV,
+    /// Rank-1 int64 arange [0, 1, ..., seq_len-1] giving absolute token positions.
+    /// Present in newer Optimum exports (e.g. whisper-small) but absent in older ones.
+    CachePosition,
+    UseCacheBranch,
+}
+
+/// Pre-computed schema for the decoder's inputs, derived once at load time by
+/// inspecting `session.inputs()`.  This drives the dynamic `Vec<(String,Value)>`
+/// build in `decode_step()` without any hard-coded layer counts or tuple macros.
+#[derive(Debug)]
+struct DecoderInputSchema {
+    /// Ordered list of (input_name, kind) pairs matching session.inputs() order.
+    slots: Vec<(String, DecoderInputKind)>,
+    /// Number of decoder transformer layers (= number of DecoderKV slots).
+    num_layers: usize,
+    /// Number of attention heads per layer.
+    num_heads: usize,
+    /// Per-head key/value dimension.
+    head_dim: usize,
+}
 
 /// Whisper backend for transcription
 pub struct WhisperBackend {
@@ -18,10 +46,8 @@ pub struct WhisperBackend {
     n_fft: usize,
     hop_length: usize,
     n_mels: usize,
-    // Model dimensions (vary by model size)
-    num_layers: usize,
-    num_heads: usize,
-    head_dim: usize,
+    // Derived once from the decoder ONNX schema
+    decoder_schema: DecoderInputSchema,
     encoder_seq_len: usize,
 }
 
@@ -84,22 +110,23 @@ impl WhisperBackend {
             .unwrap_or("whisper")
             .to_string();
 
-        // Detect model dimensions based on model name
-        let (num_layers, num_heads, head_dim, n_mels) = detect_whisper_dimensions(&model_name)?;
+        // Auto-detect decoder input schema from the ONNX session metadata.
+        let decoder_schema = DecoderInputSchema::from_session(&decoder, &model_name)?;
 
-        // Encoder sequence length varies by model size
-        let encoder_seq_len = if n_mels == 128 {
-            1500 // Large v3 uses different encoder output
-        } else {
-            1500 // Standard for other models
-        };
+        // n_mels is an audio pre-processing constant that isn't reliably encoded
+        // in the ONNX shape (all dims are dynamic in Optimum exports), so we
+        // keep a lightweight name-based fallback just for this one value.
+        let n_mels = detect_n_mels(&model_name);
+
+        // All standard Whisper variants use 1500 encoder frames.
+        let encoder_seq_len = 1500;
 
         log::info!(
             "Whisper model '{}' - {} layers, {} heads, {} head_dim, {} mels, {} encoder_len",
             model_name,
-            num_layers,
-            num_heads,
-            head_dim,
+            decoder_schema.num_layers,
+            decoder_schema.num_heads,
+            decoder_schema.head_dim,
             n_mels,
             encoder_seq_len
         );
@@ -113,9 +140,7 @@ impl WhisperBackend {
             n_fft: 400,
             hop_length: 160,
             n_mels,
-            num_layers,
-            num_heads,
-            head_dim,
+            decoder_schema,
             encoder_seq_len,
         })
     }
@@ -212,344 +237,77 @@ impl WhisperBackend {
         input_ids: &Array2<i64>,
         encoder_hidden: &Array3<f32>,
     ) -> Result<Array3<f32>> {
-        let batch_size = 1;
-        let num_heads = self.num_heads;
-        let head_dim = self.head_dim;
-        let num_layers = self.num_layers;
-        let encoder_seq_len = 1500;
+        let batch_size = 1usize;
+        let num_heads = self.decoder_schema.num_heads;
+        let head_dim = self.decoder_schema.head_dim;
+        let encoder_seq_len = self.encoder_seq_len;
 
-        // Prepare input_ids (input 0)
+        // Prepare input_ids value
         let input_ids_shape = input_ids.shape();
         let input_ids_dims = [input_ids_shape[0], input_ids_shape[1]];
         let input_ids_data = input_ids.iter().copied().collect::<Vec<i64>>();
-        let input_ids_value: Value =
-            Value::from_array((input_ids_dims.as_ref(), input_ids_data))?.into();
 
-        // Prepare encoder_hidden_states (input 1)
+        // Prepare encoder_hidden_states value
         let encoder_shape = encoder_hidden.shape();
         let encoder_dims = [encoder_shape[0], encoder_shape[1], encoder_shape[2]];
         let encoder_data = encoder_hidden.iter().copied().collect::<Vec<f32>>();
-        let encoder_value: Value = Value::from_array((encoder_dims.as_ref(), encoder_data))?.into();
 
-        // Prepare past key-values for first decode step (inputs 2 to 2+4*num_layers-1)
-        // Each layer has 4 tensors: decoder.key, decoder.value, encoder.key, encoder.value
-        // HACK: Use seq_len=1 with zeros instead of seq_len=0 because ort doesn't support
-        // 0-sized dimensions in tuple format.
-        let past_seq_len = 1;
-
+        // HACK: Use seq_len=1 with zeros instead of seq_len=0 because ort doesn't
+        // support 0-sized dimensions.
+        let past_seq_len = 1usize;
         let decoder_kv_size = batch_size * num_heads * past_seq_len * head_dim;
         let encoder_kv_size = batch_size * num_heads * encoder_seq_len * head_dim;
-
-        // use_cache_branch (last input) - set to false to disable caching
-        let use_cache: Value = Value::from_array(([1], vec![false]))?.into();
 
         log::debug!(
             "Decoder inputs: input_ids {:?}, encoder {:?}, layers={}, heads={}, past_seq_len={}",
             input_ids_dims,
             encoder_dims,
-            num_layers,
+            self.decoder_schema.num_layers,
             num_heads,
             past_seq_len,
         );
 
-        // Run decoder with the correct number of inputs based on model size
-        // We need to create KV tensors inline since Value doesn't implement Clone
-        let outputs = match num_layers {
-            4 => {
-                // Tiny: 4 layers = 16 KV tensors
-                let kv0: Value = Value::from_array((
+        // Build named inputs dynamically from the pre-computed schema, which was
+        // derived from session.inputs() at load time.  This ensures we always
+        // match the exact order and types the ONNX model expects, regardless of
+        // model size or export tool.
+        let mut inputs: Vec<(String, Value)> = Vec::with_capacity(self.decoder_schema.slots.len());
+        for (name, kind) in &self.decoder_schema.slots {
+            let value: Value = match kind {
+                DecoderInputKind::InputIds => {
+                    Value::from_array((input_ids_dims.as_ref(), input_ids_data.clone()))?.into()
+                }
+                DecoderInputKind::EncoderHidden => {
+                    Value::from_array((encoder_dims.as_ref(), encoder_data.clone()))?.into()
+                }
+                DecoderInputKind::DecoderKV => Value::from_array((
                     [batch_size, num_heads, past_seq_len, head_dim],
                     vec![0.0f32; decoder_kv_size],
                 ))?
-                .into();
-                let kv1: Value = Value::from_array((
-                    [batch_size, num_heads, past_seq_len, head_dim],
-                    vec![0.0f32; decoder_kv_size],
-                ))?
-                .into();
-                let kv2: Value = Value::from_array((
+                .into(),
+                DecoderInputKind::EncoderKV => Value::from_array((
                     [batch_size, num_heads, encoder_seq_len, head_dim],
                     vec![0.0f32; encoder_kv_size],
                 ))?
-                .into();
-                let kv3: Value = Value::from_array((
-                    [batch_size, num_heads, encoder_seq_len, head_dim],
-                    vec![0.0f32; encoder_kv_size],
-                ))?
-                .into();
-                let kv4: Value = Value::from_array((
-                    [batch_size, num_heads, past_seq_len, head_dim],
-                    vec![0.0f32; decoder_kv_size],
-                ))?
-                .into();
-                let kv5: Value = Value::from_array((
-                    [batch_size, num_heads, past_seq_len, head_dim],
-                    vec![0.0f32; decoder_kv_size],
-                ))?
-                .into();
-                let kv6: Value = Value::from_array((
-                    [batch_size, num_heads, encoder_seq_len, head_dim],
-                    vec![0.0f32; encoder_kv_size],
-                ))?
-                .into();
-                let kv7: Value = Value::from_array((
-                    [batch_size, num_heads, encoder_seq_len, head_dim],
-                    vec![0.0f32; encoder_kv_size],
-                ))?
-                .into();
-                let kv8: Value = Value::from_array((
-                    [batch_size, num_heads, past_seq_len, head_dim],
-                    vec![0.0f32; decoder_kv_size],
-                ))?
-                .into();
-                let kv9: Value = Value::from_array((
-                    [batch_size, num_heads, past_seq_len, head_dim],
-                    vec![0.0f32; decoder_kv_size],
-                ))?
-                .into();
-                let kv10: Value = Value::from_array((
-                    [batch_size, num_heads, encoder_seq_len, head_dim],
-                    vec![0.0f32; encoder_kv_size],
-                ))?
-                .into();
-                let kv11: Value = Value::from_array((
-                    [batch_size, num_heads, encoder_seq_len, head_dim],
-                    vec![0.0f32; encoder_kv_size],
-                ))?
-                .into();
-                let kv12: Value = Value::from_array((
-                    [batch_size, num_heads, past_seq_len, head_dim],
-                    vec![0.0f32; decoder_kv_size],
-                ))?
-                .into();
-                let kv13: Value = Value::from_array((
-                    [batch_size, num_heads, past_seq_len, head_dim],
-                    vec![0.0f32; decoder_kv_size],
-                ))?
-                .into();
-                let kv14: Value = Value::from_array((
-                    [batch_size, num_heads, encoder_seq_len, head_dim],
-                    vec![0.0f32; encoder_kv_size],
-                ))?
-                .into();
-                let kv15: Value = Value::from_array((
-                    [batch_size, num_heads, encoder_seq_len, head_dim],
-                    vec![0.0f32; encoder_kv_size],
-                ))?
-                .into();
-                self.decoder.run(ort::inputs![
-                    input_ids_value,
-                    encoder_value,
-                    kv0,
-                    kv1,
-                    kv2,
-                    kv3,
-                    kv4,
-                    kv5,
-                    kv6,
-                    kv7,
-                    kv8,
-                    kv9,
-                    kv10,
-                    kv11,
-                    kv12,
-                    kv13,
-                    kv14,
-                    kv15,
-                    use_cache
-                ]).map_err(|e| anyhow!("Decoder failed: {}", e))
-            }
-            6 => {
-                // Base: 6 layers = 24 KV tensors
-                let kv0: Value = Value::from_array((
-                    [batch_size, num_heads, past_seq_len, head_dim],
-                    vec![0.0f32; decoder_kv_size],
-                ))?
-                .into();
-                let kv1: Value = Value::from_array((
-                    [batch_size, num_heads, past_seq_len, head_dim],
-                    vec![0.0f32; decoder_kv_size],
-                ))?
-                .into();
-                let kv2: Value = Value::from_array((
-                    [batch_size, num_heads, encoder_seq_len, head_dim],
-                    vec![0.0f32; encoder_kv_size],
-                ))?
-                .into();
-                let kv3: Value = Value::from_array((
-                    [batch_size, num_heads, encoder_seq_len, head_dim],
-                    vec![0.0f32; encoder_kv_size],
-                ))?
-                .into();
-                let kv4: Value = Value::from_array((
-                    [batch_size, num_heads, past_seq_len, head_dim],
-                    vec![0.0f32; decoder_kv_size],
-                ))?
-                .into();
-                let kv5: Value = Value::from_array((
-                    [batch_size, num_heads, past_seq_len, head_dim],
-                    vec![0.0f32; decoder_kv_size],
-                ))?
-                .into();
-                let kv6: Value = Value::from_array((
-                    [batch_size, num_heads, encoder_seq_len, head_dim],
-                    vec![0.0f32; encoder_kv_size],
-                ))?
-                .into();
-                let kv7: Value = Value::from_array((
-                    [batch_size, num_heads, encoder_seq_len, head_dim],
-                    vec![0.0f32; encoder_kv_size],
-                ))?
-                .into();
-                let kv8: Value = Value::from_array((
-                    [batch_size, num_heads, past_seq_len, head_dim],
-                    vec![0.0f32; decoder_kv_size],
-                ))?
-                .into();
-                let kv9: Value = Value::from_array((
-                    [batch_size, num_heads, past_seq_len, head_dim],
-                    vec![0.0f32; decoder_kv_size],
-                ))?
-                .into();
-                let kv10: Value = Value::from_array((
-                    [batch_size, num_heads, encoder_seq_len, head_dim],
-                    vec![0.0f32; encoder_kv_size],
-                ))?
-                .into();
-                let kv11: Value = Value::from_array((
-                    [batch_size, num_heads, encoder_seq_len, head_dim],
-                    vec![0.0f32; encoder_kv_size],
-                ))?
-                .into();
-                let kv12: Value = Value::from_array((
-                    [batch_size, num_heads, past_seq_len, head_dim],
-                    vec![0.0f32; decoder_kv_size],
-                ))?
-                .into();
-                let kv13: Value = Value::from_array((
-                    [batch_size, num_heads, past_seq_len, head_dim],
-                    vec![0.0f32; decoder_kv_size],
-                ))?
-                .into();
-                let kv14: Value = Value::from_array((
-                    [batch_size, num_heads, encoder_seq_len, head_dim],
-                    vec![0.0f32; encoder_kv_size],
-                ))?
-                .into();
-                let kv15: Value = Value::from_array((
-                    [batch_size, num_heads, encoder_seq_len, head_dim],
-                    vec![0.0f32; encoder_kv_size],
-                ))?
-                .into();
-                let kv16: Value = Value::from_array((
-                    [batch_size, num_heads, past_seq_len, head_dim],
-                    vec![0.0f32; decoder_kv_size],
-                ))?
-                .into();
-                let kv17: Value = Value::from_array((
-                    [batch_size, num_heads, past_seq_len, head_dim],
-                    vec![0.0f32; decoder_kv_size],
-                ))?
-                .into();
-                let kv18: Value = Value::from_array((
-                    [batch_size, num_heads, encoder_seq_len, head_dim],
-                    vec![0.0f32; encoder_kv_size],
-                ))?
-                .into();
-                let kv19: Value = Value::from_array((
-                    [batch_size, num_heads, encoder_seq_len, head_dim],
-                    vec![0.0f32; encoder_kv_size],
-                ))?
-                .into();
-                let kv20: Value = Value::from_array((
-                    [batch_size, num_heads, past_seq_len, head_dim],
-                    vec![0.0f32; decoder_kv_size],
-                ))?
-                .into();
-                let kv21: Value = Value::from_array((
-                    [batch_size, num_heads, past_seq_len, head_dim],
-                    vec![0.0f32; decoder_kv_size],
-                ))?
-                .into();
-                let kv22: Value = Value::from_array((
-                    [batch_size, num_heads, encoder_seq_len, head_dim],
-                    vec![0.0f32; encoder_kv_size],
-                ))?
-                .into();
-                let kv23: Value = Value::from_array((
-                    [batch_size, num_heads, encoder_seq_len, head_dim],
-                    vec![0.0f32; encoder_kv_size],
-                ))?
-                .into();
-                self.decoder.run(ort::inputs![
-                    input_ids_value,
-                    encoder_value,
-                    kv0,
-                    kv1,
-                    kv2,
-                    kv3,
-                    kv4,
-                    kv5,
-                    kv6,
-                    kv7,
-                    kv8,
-                    kv9,
-                    kv10,
-                    kv11,
-                    kv12,
-                    kv13,
-                    kv14,
-                    kv15,
-                    kv16,
-                    kv17,
-                    kv18,
-                    kv19,
-                    kv20,
-                    kv21,
-                    kv22,
-                    kv23,
-                    use_cache
-                ]).map_err(|e| anyhow!("Decoder failed: {}", e))
-            }
-            12 => {
-                // Small: 12 layers = 48 KV tensors
-                self.run_decoder_with_layers_12(
-                    input_ids_value, encoder_value, use_cache,
-                    batch_size, num_heads, past_seq_len, head_dim, encoder_seq_len,
-                    decoder_kv_size, encoder_kv_size
-                )
-            }
-            24 => {
-                // Medium: 24 layers = 96 KV tensors
-                self.run_decoder_with_layers_24(
-                    input_ids_value, encoder_value, use_cache,
-                    batch_size, num_heads, past_seq_len, head_dim, encoder_seq_len,
-                    decoder_kv_size, encoder_kv_size
-                )
-            }
-            32 => {
-                // Large: 32 layers = 128 KV tensors
-                self.run_decoder_with_layers_32(
-                    input_ids_value, encoder_value, use_cache,
-                    batch_size, num_heads, past_seq_len, head_dim, encoder_seq_len,
-                    decoder_kv_size, encoder_kv_size
-                )
-            }
-            _ => {
-                return Err(anyhow!(
-                    "Unsupported number of layers: {}. Currently supported: 4 (tiny), 6 (base), 12 (small), 24 (medium), 32 (large)",
-                    num_layers
-                ))
-            }
-        };
+                .into(),
+                DecoderInputKind::CachePosition => {
+                    // Rank-1 int64 arange [0, 1, ..., seq_len-1] giving the absolute
+                    // position of each token in the current decoder input sequence.
+                    let seq_len = input_ids_dims[1];
+                    let positions: Vec<i64> = (0..seq_len as i64).collect();
+                    Value::from_array(([seq_len], positions))?.into()
+                }
+                DecoderInputKind::UseCacheBranch => {
+                    Value::from_array(([1usize], vec![false]))?.into()
+                }
+            };
+            inputs.push((name.clone(), value));
+        }
 
-        let outputs = match outputs {
-            Ok(out) => out,
-            Err(e) => {
-                log::error!("Decoder inference failed: {}", e);
-                return Err(anyhow!("Decoder failed: {}", e));
-            }
-        };
+        let outputs = self.decoder.run(inputs).map_err(|e| {
+            log::error!("Decoder inference failed: {}", e);
+            anyhow!("Decoder failed: {}", e)
+        })?;
 
         // Get logits - shape is [batch, seq_len, vocab_size]
         let (shape, data) = outputs[0].try_extract_tensor::<f32>()?;
@@ -784,40 +542,150 @@ impl WhisperTokenizer {
     }
 }
 
-/// Detect Whisper model dimensions from model name
-/// Returns (num_layers, num_heads, head_dim, n_mels)
-fn detect_whisper_dimensions(model_name: &str) -> Result<(usize, usize, usize, usize)> {
-    let model_lower = model_name.to_lowercase();
+impl DecoderInputSchema {
+    /// Build the schema by inspecting `session.inputs()` from the loaded ONNX
+    /// decoder model.  Input names follow the HuggingFace Optimum convention:
+    ///
+    ///   input_ids                        → i64  [batch, seq]
+    ///   encoder_hidden_states            → f32  [batch, enc_seq, d_model]
+    ///   past_key_values.N.decoder.key    → f32  [batch, heads, past_seq, head_dim]
+    ///   past_key_values.N.decoder.value  → f32  [batch, heads, past_seq, head_dim]
+    ///   past_key_values.N.encoder.key    → f32  [batch, heads, enc_seq, head_dim]
+    ///   past_key_values.N.encoder.value  → f32  [batch, heads, enc_seq, head_dim]
+    ///   use_cache_branch                 → bool [1]
+    ///
+    /// `num_heads` and `head_dim` are read from the concrete shape of the first
+    /// decoder KV tensor when available (non-negative dims), with a name-based
+    /// fallback for models exported with fully dynamic axes.
+    fn from_session(session: &Session, model_name: &str) -> Result<Self> {
+        let mut slots = Vec::new();
+        let mut num_layers = 0usize;
+        let mut num_heads_from_shape: Option<usize> = None;
+        let mut head_dim_from_shape: Option<usize> = None;
 
-    // Whisper model specifications
-    // Note: These are decoder layer counts for KV cache
-    if model_lower.contains("large") {
-        // Large: 32 layers, 20 heads, 64 head_dim, 128 mels (Large v2/v3)
-        log::info!("Detected Whisper Large model");
-        Ok((32, 20, 64, 128))
-    } else if model_lower.contains("medium") {
-        // Medium: 24 layers, 16 heads, 64 head_dim, 80 mels
-        log::info!("Detected Whisper Medium model");
-        Ok((24, 16, 64, 80))
-    } else if model_lower.contains("small") {
-        // Small: 12 layers, 12 heads, 64 head_dim, 80 mels
-        log::info!("Detected Whisper Small model");
-        Ok((12, 12, 64, 80))
-    } else if model_lower.contains("base") {
-        // Base: 6 layers, 8 heads, 64 head_dim, 80 mels
-        log::info!("Detected Whisper Base model");
-        Ok((6, 8, 64, 80))
-    } else if model_lower.contains("tiny") {
-        // Tiny: 4 layers, 6 heads, 64 head_dim, 80 mels
-        log::info!("Detected Whisper Tiny model");
-        Ok((4, 6, 64, 80))
-    } else {
-        // Default to Tiny for unknown variants
-        log::warn!(
-            "Unknown Whisper variant '{}', defaulting to Tiny dimensions",
-            model_name
+        for outlet in session.inputs() {
+            let name = outlet.name();
+            let kind = if name == "input_ids" {
+                DecoderInputKind::InputIds
+            } else if name == "encoder_hidden_states" {
+                DecoderInputKind::EncoderHidden
+            } else if name.contains("decoder.key") || name.contains("decoder.value") {
+                // Try to read num_heads / head_dim from the shape of the first
+                // decoder KV tensor (shape: [batch, heads, seq, head_dim]).
+                if num_heads_from_shape.is_none() {
+                    if let ValueType::Tensor { shape, .. } = outlet.dtype() {
+                        let dims = shape.as_ref();
+                        if dims.len() == 4 && dims[1] > 0 && dims[3] > 0 {
+                            num_heads_from_shape = Some(dims[1] as usize);
+                            head_dim_from_shape = Some(dims[3] as usize);
+                        }
+                    }
+                }
+                if name.contains("decoder.key") {
+                    num_layers += 1;
+                }
+                DecoderInputKind::DecoderKV
+            } else if name.contains("encoder.key") || name.contains("encoder.value") {
+                DecoderInputKind::EncoderKV
+            } else if name == "cache_position" {
+                DecoderInputKind::CachePosition
+            } else if name == "use_cache_branch" {
+                DecoderInputKind::UseCacheBranch
+            } else if matches!(outlet.dtype().tensor_type(), Some(TensorElementType::Bool)) {
+                // Unknown name but bool type — treat as use_cache_branch
+                log::warn!(
+                    "Unknown bool input '{}', treating as use_cache_branch",
+                    name
+                );
+                DecoderInputKind::UseCacheBranch
+            } else if matches!(outlet.dtype().tensor_type(), Some(TensorElementType::Int64)) {
+                log::warn!("Unknown i64 input '{}', treating as input_ids", name);
+                DecoderInputKind::InputIds
+            } else {
+                // f32 — count as a KV tensor; assume decoder KV if no encoder hint
+                log::warn!("Unknown f32 input '{}', treating as DecoderKV", name);
+                DecoderInputKind::DecoderKV
+            };
+            slots.push((name.to_string(), kind));
+        }
+
+        if num_layers == 0 {
+            return Err(anyhow!(
+                "Could not detect any decoder KV layers from session inputs. \
+                 Check that the ONNX model uses HuggingFace Optimum naming."
+            ));
+        }
+
+        // Fall back to name-based lookup for num_heads / head_dim when the
+        // ONNX model was exported with fully dynamic axes (all dims = -1).
+        let (num_heads, head_dim) = match (num_heads_from_shape, head_dim_from_shape) {
+            (Some(h), Some(d)) => (h, d),
+            _ => {
+                log::warn!(
+                    "KV tensor shape dims are dynamic; falling back to name-based \
+                     head/dim lookup for model '{}'",
+                    model_name
+                );
+                detect_heads_and_dim(model_name, num_layers)
+            }
+        };
+
+        log::info!(
+            "Decoder schema: {} layers, {} heads, {} head_dim, {} input slots",
+            num_layers,
+            num_heads,
+            head_dim,
+            slots.len()
         );
-        Ok((4, 6, 64, 80))
+
+        Ok(Self {
+            slots,
+            num_layers,
+            num_heads,
+            head_dim,
+        })
+    }
+}
+
+/// Return (num_heads, head_dim) from the model name as a fallback when the
+/// ONNX shape dimensions are all dynamic.  All standard Whisper variants use
+/// head_dim=64; num_heads varies by size.
+fn detect_heads_and_dim(model_name: &str, num_layers: usize) -> (usize, usize) {
+    let model_lower = model_name.to_lowercase();
+    let num_heads = if model_lower.contains("large") && !model_lower.contains("turbo") {
+        // Large v1/v2/v3: 32 layers, 20 heads
+        20
+    } else if model_lower.contains("large") {
+        // Large-v3-turbo: 24 layers, 16 heads
+        16
+    } else if model_lower.contains("medium") {
+        16
+    } else if model_lower.contains("small") {
+        12
+    } else if model_lower.contains("base") {
+        8
+    } else {
+        // Tiny or unknown — also derive from layer count as a secondary hint
+        match num_layers {
+            32 => 20,
+            24 => 16,
+            12 => 12,
+            6 => 8,
+            _ => 6, // tiny / default
+        }
+    };
+    (num_heads, 64)
+}
+
+/// Detect n_mels (mel-spectrogram frequency bins) from the model name.
+/// This is the only dimension that cannot be reliably read from the ONNX
+/// session schema because Optimum exports it as a fully dynamic axis.
+fn detect_n_mels(model_name: &str) -> usize {
+    let model_lower = model_name.to_lowercase();
+    if model_lower.contains("large") {
+        128
+    } else {
+        80
     }
 }
 
@@ -826,42 +694,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_whisper_tokenizer_decode() {
-        let encoder: HashMap<String, i64> = [
-            ("hello".to_string(), 1),
-            ("world".to_string(), 2),
-            ("Ġtest".to_string(), 3),
-            ("<|endoftext|>".to_string(), 50256),
-        ]
-        .into_iter()
-        .collect();
+    fn test_detect_n_mels() {
+        assert_eq!(detect_n_mels("whisper-large-v3"), 128);
+        assert_eq!(detect_n_mels("whisper-large-v3-turbo"), 128);
+        assert_eq!(detect_n_mels("whisper-medium"), 80);
+        assert_eq!(detect_n_mels("whisper-small"), 80);
+        assert_eq!(detect_n_mels("whisper-base"), 80);
+        assert_eq!(detect_n_mels("whisper-tiny"), 80);
+    }
 
-        let decoder: HashMap<i64, String> = [
-            (1, "hello".to_string()),
-            (2, "world".to_string()),
-            (3, "Ġtest".to_string()),
-            (50256, "<|endoftext|>".to_string()),
-        ]
-        .into_iter()
-        .collect();
-
-        let special_tokens = WhisperSpecialTokens {
-            sot: 50258,
-            eot: 50256,
-            transcribe: 50359,
-            translate: 50358,
-            no_speech: 50362,
-            notimestamp: 50363,
-        };
-
-        let tokenizer = WhisperTokenizer {
-            encoder,
-            decoder,
-            special_tokens,
-        };
-
-        let tokens = vec![1, 2, 3, 50256];
-        let text = tokenizer.decode(&tokens, true);
-        assert_eq!(text, "helloworld test");
+    #[test]
+    fn test_detect_heads_and_dim() {
+        // head_dim is always 64 for all standard Whisper models
+        assert_eq!(detect_heads_and_dim("whisper-tiny", 4), (6, 64));
+        assert_eq!(detect_heads_and_dim("whisper-base", 6), (8, 64));
+        assert_eq!(detect_heads_and_dim("whisper-small", 12), (12, 64));
+        assert_eq!(detect_heads_and_dim("whisper-medium", 24), (16, 64));
+        assert_eq!(detect_heads_and_dim("whisper-large-v3-turbo", 24), (16, 64));
+        assert_eq!(detect_heads_and_dim("whisper-large-v3", 32), (20, 64));
     }
 }
