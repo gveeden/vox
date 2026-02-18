@@ -4,9 +4,9 @@ A fast, lightweight voice transcription tool supporting multiple state-of-the-ar
 
 ## Features
 
-- 🎙️ **One-key recording**: Press Alt+Space to toggle recording (configurable)
-- 🤖 **Multiple ASR backends**: Whisper, Moonshine, SenseVoice, and Parakeet support
-- 🌍 **Multilingual**: Support for 100+ languages depending on model choice
+- 🎙️ **One-key recording**: Press Ctrl+Space to toggle recording (configurable)
+- 🤖 **Multiple ASR backends**: Moonshine and SenseVoice support
+- 🌍 **Multilingual**: Support for multiple languages depending on model choice
 - 📋 **Smart auto-paste**: Automatically detects terminals and apps for correct paste method
 - 📜 **History tracking**: Last 100 transcripts saved to `history.json` (no audio files)
 - 🔔 **Clean notifications**: Single notification while recording (Linux: notify-send)
@@ -72,12 +72,9 @@ CleverNote supports multiple speech recognition backends with automatic model ma
 
 ### Available Models
 
-**Whisper (OpenAI)** - Best multilingual accuracy, 100+ languages
-- `whisper-tiny` - 39M params, 150MB, fastest Whisper
-- `whisper-base` - 74M params, 290MB, balanced speed/accuracy
-- `whisper-small` - 244M params, 970MB, good accuracy
-- `whisper-medium` - 769M params, 3GB, high accuracy
-- `whisper-large-v3-turbo` - 809M params, 1.5GB, best Whisper with timestamps
+**Parakeet (NVIDIA)** - High accuracy English ASR (default)
+- `parakeet-tdt-0.6b-v3-int8` - 0.6B params, 900MB, INT8 quantized (default)
+- `parakeet-tdt-0.6b-v3` - 0.6B params, 2.4GB, FP32
 
 **Moonshine (UsefulSensors)** - Ultra-fast streaming ASR
 - `moonshine-tiny` - 27M params, 110MB, ~25x faster than real-time
@@ -85,8 +82,6 @@ CleverNote supports multiple speech recognition backends with automatic model ma
 
 **SenseVoice (Alibaba)** - Multilingual with emotion detection
 - `sensevoice-small` - 220M params, 937MB, supports Chinese/Japanese/Korean/English
-
-**Parakeet (NVIDIA)** - Currently unavailable (models not publicly hosted)
 
 ### Model Configuration
 
@@ -101,11 +96,11 @@ Example custom model in `~/.config/clevernote/models.json`:
 {
   "models": [
     {
-      "id": "my-custom-whisper",
-      "name": "My Custom Whisper",
-      "description": "Fine-tuned Whisper for my use case",
+      "id": "my-custom-moonshine",
+      "name": "My Custom Moonshine",
+      "description": "Custom Moonshine model",
       "repository": "username/repo-name",
-      "backend": "whisper",
+      "backend": "moonshine",
       "quantization": "fp32",
       "model_type": "multi-file",
       "files": [
@@ -120,10 +115,6 @@ Example custom model in `~/.config/clevernote/models.json`:
         {
           "url": "https://huggingface.co/username/repo-name/resolve/main/tokenizer.json",
           "filename": "tokenizer.json"
-        },
-        {
-          "url": "https://huggingface.co/username/repo-name/resolve/main/vocab.json",
-          "filename": "vocab.json"
         }
       ]
     }
@@ -135,17 +126,17 @@ Example custom model in `~/.config/clevernote/models.json`:
 
 Specify a model ID when starting the daemon:
 ```bash
-# Use Moonshine Tiny (fastest)
-clevernote-daemon --model moonshine-tiny
+# Use Parakeet INT8 (default, best accuracy/speed balance)
+clevernote-daemon --model parakeet-tdt-0.6b-v3-int8
 
-# Use Whisper Small (balanced)
-clevernote-daemon --model whisper-small
+# Use Moonshine Tiny (fastest, smallest)
+clevernote-daemon --model moonshine-tiny
 
 # Use SenseVoice (Asian languages + emotion)
 clevernote-daemon --model sensevoice-small
 ```
 
-If no model is specified, the daemon uses the model marked as `"default": true` in the registry (currently `parakeet-tdt-0.6b-v3-int8`, though unavailable).
+If no model is specified, the daemon uses `parakeet-tdt-0.6b-v3-int8` (the default).
 
 ### Model Downloads
 
@@ -175,10 +166,9 @@ Example structure:
 │   │   ├── encoder.onnx
 │   │   ├── decoder.onnx
 │   │   └── tokenizer.json
-│   ├── whisper-small/
+│   ├── moonshine-base/
 │   │   ├── encoder.onnx
 │   │   ├── decoder.onnx
-│   │   ├── vocab.json
 │   │   └── tokenizer.json
 │   └── sensevoice-small/
 │       ├── model.onnx
@@ -200,8 +190,8 @@ The easiest way to get started:
 # Start daemon with Moonshine Tiny (fastest, auto-downloads)
 clevernote-daemon --model moonshine-tiny
 
-# Or use Whisper Small (better accuracy)
-clevernote-daemon --model whisper-small
+# Or use Moonshine Base (better accuracy)
+clevernote-daemon --model moonshine-base
 
 # Or use SenseVoice (Asian languages)
 clevernote-daemon --model sensevoice-small
@@ -213,7 +203,7 @@ Models are downloaded automatically on first use.
 
 ```
 Daemon:
-  -m, --model <MODEL_ID>           Model ID from registry (e.g., moonshine-tiny, whisper-small)
+  -m, --model <MODEL_ID>           Model ID from registry (e.g., moonshine-tiny, sensevoice-small)
   -c, --config <FILE>              Path to config file [default: ~/.config/clevernote/config.toml]
   -h, --help                       Print help
   -V, --version                    Print version
@@ -276,7 +266,7 @@ The last 100 transcripts are kept automatically (most recent first). Audio files
    ```
    Or use systemd: `systemctl --user start clevernote-daemon`
 
-2. **Use the hotkey** (Alt+Space by default):
+2. **Use the hotkey** (Ctrl+Space by default):
    - **First press**: Start recording (🔴 Recording notification appears via notify-send)
    - Speak your message
    - **Second press**: Stop recording and transcribe
@@ -291,15 +281,6 @@ The last 100 transcripts are kept automatically (most recent first). Audio files
    clevernote status   # Check daemon status
    clevernote quit     # Stop daemon
    ```
-
-### Standalone Mode (No Daemon)
-
-```bash
-# Quick transcription (parakeet CLI)
-./parakeet --model models/parakeet-tdt
-```
-
-Press Alt+Space to toggle recording. Text transcribed and pasted automatically.
 
 ## Hardware Acceleration
 
@@ -336,15 +317,6 @@ cargo build --release --features webgpu
 clevernote-daemon --model moonshine-tiny
 ```
 
-### Accurate Multilingual (Whisper)
-```bash
-# Best accuracy, 100+ languages
-clevernote-daemon --model whisper-small
-
-# Even better accuracy
-clevernote-daemon --model whisper-medium
-```
-
 ### Asian Languages + Emotion (SenseVoice)
 ```bash
 # Chinese, Japanese, Korean, English with emotion detection
@@ -359,10 +331,9 @@ Tested on typical voice recordings (~10-30 seconds):
 |-------|-------|----------|-----------|------|
 | Moonshine Tiny | ⚡⚡⚡⚡⚡ ~25x RT | ⭐⭐⭐ | English | 110 MB |
 | Moonshine Base | ⚡⚡⚡⚡ ~20x RT | ⭐⭐⭐⭐ | English | 245 MB |
-| Whisper Tiny | ⚡⚡⚡ ~10x RT | ⭐⭐⭐ | 100+ | 150 MB |
-| Whisper Small | ⚡⚡ ~5x RT | ⭐⭐⭐⭐ | 100+ | 970 MB |
-| Whisper Medium | ⚡ ~2x RT | ⭐⭐⭐⭐⭐ | 100+ | 3 GB |
-| SenseVoice | ⚡⚡ ~2.6x RT | ⭐⭐⭐⭐ | 5 Asian | 937 MB |
+| Parakeet INT8 (default) | ⚡⚡⚡ | ⭐⭐⭐⭐⭐ | English | 900 MB |
+| Parakeet FP32 | ⚡⚡ | ⭐⭐⭐⭐⭐ | English | 2.4 GB |
+| SenseVoice | ⚡⚡ ~2.6x RT | ⭐⭐⭐⭐ | 5 languages | 937 MB |
 
 *RT = Real-time (1x = same duration as audio)*
 
@@ -379,7 +350,7 @@ This Rust implementation offers several advantages:
 ## Architecture
 
 - **Audio Recording**: `cpal` for cross-platform audio capture
-- **ASR Models**: `parakeet-rs` library for ONNX inference
+- **ASR Models**: ONNX Runtime for model inference
 - **Keyboard Hotkeys**: `rdev` for global keyboard listener
 - **Clipboard**: `arboard` for clipboard operations
 - **Notifications**: `notify-rust` for system notifications
@@ -408,9 +379,9 @@ This Rust implementation offers several advantages:
 
 ## License
 
-This project uses the parakeet-rs library which is dual-licensed under MIT/Apache-2.0.
+This project is dual-licensed under MIT/Apache-2.0.
 
 ## Credits
 
-- [parakeet-rs](https://github.com/altunenes/parakeet-rs) - Rust bindings for Parakeet
-- [NVIDIA NeMo](https://github.com/NVIDIA/NeMo) - Original Parakeet models
+- [cpal](https://github.com/RustAudio/cpal) - Cross-platform audio capture
+- [ort](https://github.com/pykeio/ort) - ONNX Runtime Rust bindings

@@ -20,7 +20,7 @@ Voice transcription daemon for Linux with Wayland/Hyprland support.
 │  Compositor      │      ~/.config/clevernote/          │   clevernote    │
 │  (Hyprland/Sway) │◄───────daemon.sock───────────┤   (client)      │
 │                  │                               └─────────────────┘
-│  Hotkey: Alt+Space                                        │
+│  Hotkey: Ctrl+Space                                       │
 │      │                                                    │
 │      ▼                                                    ▼
 │  exec clevernote toggle                         Sends: Toggle command
@@ -74,8 +74,8 @@ Add to `~/.config/hypr/hyprland.conf`:
 # Start daemon on login
 exec-once = clevernote-daemon
 
-# Bind Alt+Space to toggle recording
-bind = ALT, SPACE, exec, clevernote toggle
+# Bind Ctrl+Space to toggle recording
+bind = CTRL, SPACE, exec, clevernote toggle
 ```
 
 Then reload Hyprland config or restart.
@@ -88,8 +88,8 @@ Add to `~/.config/sway/config`:
 # Start daemon on login
 exec clevernote-daemon
 
-# Bind Alt+Space to toggle recording
-bindsym Mod1+Space exec clevernote toggle
+# Bind Ctrl+Space to toggle recording
+bindsym Ctrl+Space exec clevernote toggle
 ```
 
 Then reload: `swaymsg reload`
@@ -134,9 +134,9 @@ systemctl --user start clevernote-daemon
 
 Once the daemon is running and hotkeys are bound:
 
-1. Press **Alt+Space** to start recording
+1. Press **Ctrl+Space** to start recording
 2. Speak your message
-3. Press **Alt+Space** again to stop
+3. Press **Ctrl+Space** again to stop
 
 The transcribed text will automatically:
 - ✅ Copy to clipboard (wl-copy on Wayland)

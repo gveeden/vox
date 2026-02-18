@@ -2,7 +2,7 @@
 
 # Modifier key: Alt, Ctrl, Cmd (Command/Meta), or Shift
 # Default: Alt
-modifier_key = "Alt"
+modifier_key = "Ctrl"
 
 # Trigger key: Space, Enter, Tab, Escape
 # Default: Space
@@ -16,8 +16,8 @@ trigger_key = "Space"
 # Works immediately for subsequent recordings (no need to press twice!)
 #
 # Recommended combinations:
-# - Alt+Space (default, won't create spaces in editors)
-# - Alt+Enter (alternative)
-# - Ctrl+Space (if Alt conflicts with other apps)
+# - Ctrl+Space (default)
+# - Ctrl+Enter (alternative)
+# - Alt+Space (alternative)
 
 
