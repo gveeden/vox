@@ -21,7 +21,7 @@ name = "clevernote"
 path = "src/bin/client.rs"
 
 [dependencies]
-parakeet-rs = { path = "../parakeet-rs" }
+parakeet-rs = "0.3.3"
 cpal = "0.15"
 hound = "3.5"
 chrono = "0.4"

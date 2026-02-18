@@ -49,7 +49,7 @@
         },
         {
           "url": "https://huggingface.co/nasedkinpv/parakeet-tdt-0.6b-v3-onnx-int8/resolve/main/decoder_joint-int8.onnx",
-          "filename": "decoder_joint-int8.onnx"
+          "filename": "decoder_joint.onnx"
         },
         {
           "url": "https://huggingface.co/nasedkinpv/parakeet-tdt-0.6b-v3-onnx-int8/resolve/main/vocab.txt",
@@ -132,6 +132,6 @@
           "filename": "embedding.npy"
         }
       ]
-    },
+    }
   ]
 }

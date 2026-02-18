@@ -252,6 +252,11 @@ fn main() -> Result<()> {
         thread::sleep(Duration::from_millis(100));
     }
 
+    if !daemon_state.model_loaded.load(Ordering::Relaxed) {
+        error!("Model failed to load, exiting");
+        std::process::exit(1);
+    }
+
     info!("Model loaded successfully");
 
     // Setup Unix socket server

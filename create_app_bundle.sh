@@ -11,14 +11,6 @@ OS="$(uname -s)"
 APP_NAME="CleverNote"
 BINARY_SOURCE="./target/release/parakeet"
 
-# Check for parakeet-rs dependency
-PARAKEET_RS_PATH="../parakeet-rs"
-if [ ! -d "$PARAKEET_RS_PATH" ]; then
-    echo "📦 Cloning parakeet-rs dependency..."
-    (cd .. && git clone https://github.com/altunenes/parakeet-rs.git)
-    echo "✅ Dependency cloned"
-fi
-
 # Check for required system dependencies on Linux
 if [ "$OS" = "Linux" ]; then
     echo "🔍 Checking system dependencies..."
