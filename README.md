@@ -1,11 +1,12 @@
 # CleverNote - Voice-to-Text with One Keystroke
 
-A fast, lightweight voice transcription tool using NVIDIA Parakeet ASR models. Press a hotkey to record, and your speech is instantly transcribed and pasted where you need it.
+A fast, lightweight voice transcription tool supporting multiple state-of-the-art ASR models. Press a hotkey to record, and your speech is instantly transcribed and pasted where you need it.
 
 ## Features
 
 - 🎙️ **One-key recording**: Press Alt+Space to toggle recording (configurable)
-- 🤖 **Multilingual**: Supports 25+ languages via Parakeet TDT model
+- 🤖 **Multiple ASR backends**: Whisper, Moonshine, SenseVoice, and Parakeet support
+- 🌍 **Multilingual**: Support for 100+ languages depending on model choice
 - 📋 **Smart auto-paste**: Automatically detects terminals and apps for correct paste method
 - 📜 **History tracking**: Last 100 transcripts saved to `history.json` (no audio files)
 - 🔔 **Clean notifications**: Single notification while recording (Linux: notify-send)
@@ -13,6 +14,7 @@ A fast, lightweight voice transcription tool using NVIDIA Parakeet ASR models. P
 - 🔒 **Privacy**: Runs 100% locally, no cloud services
 - 🖥️ **Cross-platform**: macOS, Linux (X11/Wayland), Windows
 - 🎯 **Wayland native**: Works perfectly on Hyprland, Sway, and other Wayland compositors
+- 📦 **On-demand model downloads**: Models downloaded automatically from HuggingFace
 
 ## Requirements
 
@@ -64,71 +66,163 @@ cp target/release/clevernote-daemon ~/.local/bin/
 cp target/release/clevernote ~/.local/bin/
 ```
 
-## Model Setup
+## Model System
 
-### Option 1: CTC Model (English-only)
+CleverNote supports multiple speech recognition backends with automatic model management. Models are downloaded on-demand from HuggingFace and stored in `~/.config/clevernote/models/`.
 
-Download the ONNX model files to a directory. Required files:
-- `model.onnx` (or `model_fp16.onnx`, `model_int8.onnx`, `model_q4.onnx`)
-- `tokenizer.json`
-- `config.json`
-- `preprocessor_config.json`
+### Available Models
 
-### Option 2: TDT Model (Multilingual)
+**Whisper (OpenAI)** - Best multilingual accuracy, 100+ languages
+- `whisper-tiny` - 39M params, 150MB, fastest Whisper
+- `whisper-base` - 74M params, 290MB, balanced speed/accuracy
+- `whisper-small` - 244M params, 970MB, good accuracy
+- `whisper-medium` - 769M params, 3GB, high accuracy
+- `whisper-large-v3-turbo` - 809M params, 1.5GB, best Whisper with timestamps
 
-For the TDT model (supports 25+ languages), you need:
-- `encoder-model.onnx`
-- `decoder_joint-model.onnx`
-- `vocab.txt`
-- Configuration files
+**Moonshine (UsefulSensors)** - Ultra-fast streaming ASR
+- `moonshine-tiny` - 27M params, 110MB, ~25x faster than real-time
+- `moonshine-base` - 61M params, 245MB, better accuracy
 
-You can download pre-converted ONNX models or convert from NeMo format.
+**SenseVoice (Alibaba)** - Multilingual with emotion detection
+- `sensevoice-small` - 220M params, 937MB, supports Chinese/Japanese/Korean/English
+
+**Parakeet (NVIDIA)** - Currently unavailable (models not publicly hosted)
+
+### Model Configuration
+
+Models are configured in two places:
+1. **Embedded defaults** - Built into the binary at compile time (`models.json`)
+2. **User overrides** - Runtime config at `~/.config/clevernote/models.json`
+
+User models override or extend embedded defaults (matched by ID).
+
+Example custom model in `~/.config/clevernote/models.json`:
+```json
+{
+  "models": [
+    {
+      "id": "my-custom-whisper",
+      "name": "My Custom Whisper",
+      "description": "Fine-tuned Whisper for my use case",
+      "repository": "username/repo-name",
+      "backend": "whisper",
+      "quantization": "fp32",
+      "model_type": "multi-file",
+      "files": [
+        {
+          "url": "https://huggingface.co/username/repo-name/resolve/main/encoder.onnx",
+          "filename": "encoder.onnx"
+        },
+        {
+          "url": "https://huggingface.co/username/repo-name/resolve/main/decoder.onnx",
+          "filename": "decoder.onnx"
+        },
+        {
+          "url": "https://huggingface.co/username/repo-name/resolve/main/tokenizer.json",
+          "filename": "tokenizer.json"
+        },
+        {
+          "url": "https://huggingface.co/username/repo-name/resolve/main/vocab.json",
+          "filename": "vocab.json"
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Model Selection
+
+Specify a model ID when starting the daemon:
+```bash
+# Use Moonshine Tiny (fastest)
+clevernote-daemon --model moonshine-tiny
+
+# Use Whisper Small (balanced)
+clevernote-daemon --model whisper-small
+
+# Use SenseVoice (Asian languages + emotion)
+clevernote-daemon --model sensevoice-small
+```
+
+If no model is specified, the daemon uses the model marked as `"default": true` in the registry (currently `parakeet-tdt-0.6b-v3-int8`, though unavailable).
+
+### Model Downloads
+
+Models are downloaded automatically on first use:
+```bash
+# First run downloads model files with progress bar
+clevernote-daemon --model moonshine-tiny
+# Downloading moonshine-tiny (110 MB)...
+# [====================================] 100% encoder.onnx
+# [====================================] 100% decoder.onnx
+# [====================================] 100% tokenizer.json
+
+# Subsequent runs load instantly
+clevernote-daemon --model moonshine-tiny
+# Loading model from ~/.config/clevernote/models/moonshine-tiny/
+```
+
+### Model Storage
+
+Models are stored in: `~/.config/clevernote/models/{model-id}/`
+
+Example structure:
+```
+~/.config/clevernote/
+├── models/
+│   ├── moonshine-tiny/
+│   │   ├── encoder.onnx
+│   │   ├── decoder.onnx
+│   │   └── tokenizer.json
+│   ├── whisper-small/
+│   │   ├── encoder.onnx
+│   │   ├── decoder.onnx
+│   │   ├── vocab.json
+│   │   └── tokenizer.json
+│   └── sensevoice-small/
+│       ├── model.onnx
+│       ├── tokenizer.model
+│       ├── am.mvn
+│       ├── embedding.npy
+│       └── vocab.json (generated at runtime)
+├── models.json (user overrides)
+└── config.toml
+```
 
 ## Usage
 
-### Quick Start (Auto-Download TDT Model)
+### Quick Start
 
-The easiest way to get started is to just run the app without any arguments:
-
-```bash
-./parakeet
-```
-
-If no model is found, the app will offer to automatically download the TDT multilingual model (~3GB) from Hugging Face to `models/parakeet-tdt/`.
-
-### Basic Usage (CTC Model)
+The easiest way to get started:
 
 ```bash
-# Use model from current directory
-./parakeet --model . --no-tdt
+# Start daemon with Moonshine Tiny (fastest, auto-downloads)
+clevernote-daemon --model moonshine-tiny
 
-# Or specify a model file
-./parakeet --model /path/to/model.onnx --no-tdt
+# Or use Whisper Small (better accuracy)
+clevernote-daemon --model whisper-small
+
+# Or use SenseVoice (Asian languages)
+clevernote-daemon --model sensevoice-small
 ```
 
-### TDT Model (Multilingual)
-
-```bash
-# Use TDT model (default)
-./parakeet --model /path/to/tdt_model_dir --tdt
-
-# Or just use default location (will download if missing)
-./parakeet
-```
+Models are downloaded automatically on first use.
 
 ### Command Line Options
 
 ```
-Options:
-  -m, --model <MODEL>              Path to ONNX model directory or file
-                                   [default: models/parakeet-tdt, will auto-download if missing]
-  -t, --tdt                        Use TDT model (multilingual) [default: true]
-  -o, --output-dir <DIR>           Output directory for transcripts [default: transcripts]
-  -k, --keep-audio                 Keep audio recordings (don't delete after transcription)
-  -s, --sample-rate <SAMPLE_RATE>  Audio sample rate in Hz [default: 16000]
-  -c, --config-file <FILE>         Path to config file [default: config.toml]
+Daemon:
+  -m, --model <MODEL_ID>           Model ID from registry (e.g., moonshine-tiny, whisper-small)
+  -c, --config <FILE>              Path to config file [default: ~/.config/clevernote/config.toml]
   -h, --help                       Print help
   -V, --version                    Print version
+
+Client:
+  toggle                           Start/stop recording
+  status                           Check daemon status
+  quit                             Stop daemon
+  -h, --help                       Print help
 ```
 
 ## Configuration
@@ -236,34 +330,41 @@ cargo build --release --features webgpu
 
 ## Examples
 
-### English Transcription (CTC)
+### Fast Transcription (Moonshine)
 ```bash
-./parakeet --model ./parakeet_ctc
+# Fastest model, ~25x faster than real-time
+clevernote-daemon --model moonshine-tiny
 ```
 
-### Multilingual Transcription (TDT)
+### Accurate Multilingual (Whisper)
 ```bash
-./parakeet --model ./parakeet_tdt --tdt
+# Best accuracy, 100+ languages
+clevernote-daemon --model whisper-small
+
+# Even better accuracy
+clevernote-daemon --model whisper-medium
 ```
 
-### Keep Audio Files
+### Asian Languages + Emotion (SenseVoice)
 ```bash
-./parakeet --model ./model --keep-audio
+# Chinese, Japanese, Korean, English with emotion detection
+clevernote-daemon --model sensevoice-small
 ```
 
-### Custom Output Directory
-```bash
-./parakeet --model ./model --output-dir ~/my_transcripts
-```
+### Performance Comparison
 
-### Custom Sample Rate
-```bash
-# Use 8kHz sample rate (e.g., for phone call audio)
-./parakeet --model ./model --sample-rate 8000
+Tested on typical voice recordings (~10-30 seconds):
 
-# Default is 16kHz (recommended for Parakeet models)
-./parakeet --model ./model --sample-rate 16000
-```
+| Model | Speed | Accuracy | Languages | Size |
+|-------|-------|----------|-----------|------|
+| Moonshine Tiny | ⚡⚡⚡⚡⚡ ~25x RT | ⭐⭐⭐ | English | 110 MB |
+| Moonshine Base | ⚡⚡⚡⚡ ~20x RT | ⭐⭐⭐⭐ | English | 245 MB |
+| Whisper Tiny | ⚡⚡⚡ ~10x RT | ⭐⭐⭐ | 100+ | 150 MB |
+| Whisper Small | ⚡⚡ ~5x RT | ⭐⭐⭐⭐ | 100+ | 970 MB |
+| Whisper Medium | ⚡ ~2x RT | ⭐⭐⭐⭐⭐ | 100+ | 3 GB |
+| SenseVoice | ⚡⚡ ~2.6x RT | ⭐⭐⭐⭐ | 5 Asian | 937 MB |
+
+*RT = Real-time (1x = same duration as audio)*
 
 ## Differences from Python Version
 
