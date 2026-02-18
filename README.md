@@ -12,9 +12,10 @@ A fast, lightweight voice transcription tool supporting multiple state-of-the-ar
 - 🔔 **Clean notifications**: Single notification while recording (Linux: notify-send)
 - ⚡ **Fast daemon mode**: Pre-loaded model for instant transcription
 - 🔒 **Privacy**: Runs 100% locally, no cloud services
-- 🖥️ **Cross-platform**: macOS, Linux (X11/Wayland), Windows
-- 🎯 **Wayland native**: Works perfectly on Hyprland, Sway, and other Wayland compositors
+- 🖥️ **Cross-platform**: macOS (untested), Linux (X11/Wayland)
+- 🎯 **Wayland native**: Works perfectly on Hyprland (tested), Sway (untested), and other Wayland compositors (untested)
 - 📦 **On-demand model downloads**: Models downloaded automatically from HuggingFace
+- Limited to models in list
 
 ## Requirements
 
@@ -282,71 +283,6 @@ The last 100 transcripts are kept automatically (most recent first). Audio files
    clevernote quit     # Stop daemon
    ```
 
-## Hardware Acceleration
-
-Enable GPU acceleration by building with feature flags:
-
-```bash
-# CUDA
-cargo build --release --features cuda
-
-# TensorRT
-cargo build --release --features tensorrt
-
-# CoreML (macOS)
-cargo build --release --features coreml
-
-# DirectML (Windows)
-cargo build --release --features directml
-
-# ROCm (AMD)
-cargo build --release --features rocm
-
-# OpenVINO
-cargo build --release --features openvino
-
-# WebGPU
-cargo build --release --features webgpu
-```
-
-## Examples
-
-### Fast Transcription (Moonshine)
-```bash
-# Fastest model, ~25x faster than real-time
-clevernote-daemon --model moonshine-tiny
-```
-
-### Asian Languages + Emotion (SenseVoice)
-```bash
-# Chinese, Japanese, Korean, English with emotion detection
-clevernote-daemon --model sensevoice-small
-```
-
-### Performance Comparison
-
-Tested on typical voice recordings (~10-30 seconds):
-
-| Model | Speed | Accuracy | Languages | Size |
-|-------|-------|----------|-----------|------|
-| Moonshine Tiny | ⚡⚡⚡⚡⚡ ~25x RT | ⭐⭐⭐ | English | 110 MB |
-| Moonshine Base | ⚡⚡⚡⚡ ~20x RT | ⭐⭐⭐⭐ | English | 245 MB |
-| Parakeet INT8 (default) | ⚡⚡⚡ | ⭐⭐⭐⭐⭐ | English | 900 MB |
-| Parakeet FP32 | ⚡⚡ | ⭐⭐⭐⭐⭐ | English | 2.4 GB |
-| SenseVoice | ⚡⚡ ~2.6x RT | ⭐⭐⭐⭐ | 5 languages | 937 MB |
-
-*RT = Real-time (1x = same duration as audio)*
-
-## Differences from Python Version
-
-This Rust implementation offers several advantages:
-
-- **Flexible Model Support**: Specify any ONNX model path via command line
-- **Better Performance**: Native Rust with optimized ONNX Runtime
-- **Lower Memory Usage**: Efficient memory management
-- **Cross-platform**: Works on macOS, Linux, and Windows
-- **No Python Dependency**: Single binary, no runtime required
-
 ## Architecture
 
 - **Audio Recording**: `cpal` for cross-platform audio capture
@@ -369,7 +305,6 @@ This Rust implementation offers several advantages:
 
 ### Keyboard shortcuts not working
 - Check accessibility permissions (macOS)
-- Try running with administrator privileges (Windows)
 - Verify no other app is capturing the same hotkey
 
 ### Transcription errors
