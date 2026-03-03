@@ -236,6 +236,7 @@ Daemon:
 
 Client:
   toggle                           Start/stop recording
+  device list                      List local input audio devices (no daemon IPC)
   status                           Check daemon status
   quit                             Stop daemon
   -h, --help                       Print help

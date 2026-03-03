@@ -2,6 +2,7 @@
 use clap::{Parser, Subcommand};
 use clevernote::ipc::{self, Command, Response, SuccessResponse};
 use clevernote::models::{ensure_model_downloaded, remove_model, ModelRegistry};
+use cpal::traits::{DeviceTrait, HostTrait};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
@@ -31,6 +32,11 @@ enum Commands {
         #[command(subcommand)]
         cmd: ModelCommands,
     },
+    /// Audio input device commands (local, no daemon IPC)
+    Device {
+        #[command(subcommand)]
+        cmd: DeviceCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -54,6 +60,12 @@ enum ModelCommands {
     },
 }
 
+#[derive(Subcommand)]
+enum DeviceCommands {
+    /// List local input audio devices
+    List,
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -64,7 +76,52 @@ fn main() {
         Commands::Status => handle_command(Command::Status),
         Commands::Quit => handle_command(Command::Quit),
         Commands::Model { cmd } => handle_model_command(cmd),
+        Commands::Device { cmd } => handle_device_command(cmd),
     }
+}
+
+fn handle_device_command(cmd: DeviceCommands) {
+    let result = match cmd {
+        DeviceCommands::List => list_input_devices(),
+    };
+
+    if let Err(err) = result {
+        eprintln!("Error: {}", err);
+        std::process::exit(1);
+    }
+}
+
+fn list_input_devices() -> Result<(), String> {
+    let host = cpal::default_host();
+    let default_device_name = host.default_input_device().and_then(|d| d.name().ok());
+
+    let input_devices = host
+        .input_devices()
+        .map_err(|err| format!("Failed to enumerate input devices: {}", err))?;
+
+    let mut device_names = Vec::new();
+    for device in input_devices {
+        let name = device
+            .name()
+            .unwrap_or_else(|_| "<unavailable device name>".to_string());
+        device_names.push(name);
+    }
+
+    if device_names.is_empty() {
+        return Err("No input audio devices found".to_string());
+    }
+
+    println!("Local input devices:");
+    for (index, name) in device_names.iter().enumerate() {
+        let default_marker = if default_device_name.as_deref() == Some(name.as_str()) {
+            " [default]"
+        } else {
+            ""
+        };
+        println!("  {}: {}{}", index, name, default_marker);
+    }
+
+    Ok(())
 }
 
 fn handle_command(command: Command) {
