@@ -26,6 +26,8 @@ struct DaemonConfig {
     modifier_key: String,
     #[serde(default = "default_trigger_key")]
     trigger_key: String,
+    #[serde(default = "default_auto_paste")]
+    auto_paste: bool,
     #[serde(default = "default_auto_inject")]
     auto_inject: bool,
     #[serde(default = "default_active_model")]
@@ -38,6 +40,10 @@ fn default_modifier_key() -> String {
 
 fn default_trigger_key() -> String {
     "Space".to_string()
+}
+
+fn default_auto_paste() -> bool {
+    true
 }
 
 fn default_auto_inject() -> bool {
@@ -53,6 +59,7 @@ impl Default for DaemonConfig {
         Self {
             modifier_key: default_modifier_key(),
             trigger_key: default_trigger_key(),
+            auto_paste: default_auto_paste(),
             auto_inject: default_auto_inject(),
             active_model: default_active_model(),
         }
@@ -127,6 +134,7 @@ struct TranscriptionJob {
     device_sample_rate: u32,
     device_channels: u16,
     output_dir: PathBuf,
+    auto_paste: bool,
     auto_inject: bool,
 }
 
@@ -182,8 +190,8 @@ fn main() -> Result<()> {
     let config_path = config_dir.join("config.toml");
     let config = DaemonConfig::load(&config_path)?;
     info!(
-        "⚙️  Config loaded: auto_inject={}, active_model={}",
-        config.auto_inject, config.active_model
+        "⚙️  Config loaded: auto_paste={}, auto_inject={}, active_model={}",
+        config.auto_paste, config.auto_inject, config.active_model
     );
 
     // Get models directory
@@ -289,6 +297,7 @@ fn main() -> Result<()> {
                     &daemon_state,
                     &output_dir,
                     device_sample_rate,
+                    config.auto_paste,
                     config.auto_inject,
                 ) {
                     error!("Error handling client: {}", e);
@@ -322,6 +331,7 @@ fn handle_client(
     daemon_state: &Arc<DaemonState>,
     output_dir: &PathBuf,
     device_sample_rate: u32,
+    auto_paste: bool,
     auto_inject: bool,
 ) -> Result<()> {
     let mut reader = BufReader::new(stream.try_clone()?);
@@ -338,6 +348,7 @@ fn handle_client(
             tx,
             output_dir,
             device_sample_rate,
+            auto_paste,
             auto_inject,
             daemon_state,
         ),
@@ -347,6 +358,7 @@ fn handle_client(
             tx,
             output_dir,
             device_sample_rate,
+            auto_paste,
             auto_inject,
             daemon_state,
         ),
@@ -399,6 +411,7 @@ fn handle_stop(
     tx: &std::sync::mpsc::Sender<TranscriptionJob>,
     output_dir: &PathBuf,
     device_sample_rate: u32,
+    auto_paste: bool,
     auto_inject: bool,
     daemon_state: &Arc<DaemonState>,
 ) -> Response {
@@ -431,6 +444,7 @@ fn handle_stop(
         device_sample_rate,
         device_channels,
         output_dir: output_dir.clone(),
+        auto_paste,
         auto_inject,
     };
 
@@ -448,6 +462,7 @@ fn handle_toggle(
     tx: &std::sync::mpsc::Sender<TranscriptionJob>,
     output_dir: &PathBuf,
     device_sample_rate: u32,
+    auto_paste: bool,
     auto_inject: bool,
     daemon_state: &Arc<DaemonState>,
 ) -> Response {
@@ -463,6 +478,7 @@ fn handle_toggle(
             tx,
             output_dir,
             device_sample_rate,
+            auto_paste,
             auto_inject,
             daemon_state,
         )
@@ -674,7 +690,7 @@ fn process_transcription_with_backend(
     );
 
     // Copy to clipboard and optionally inject
-    if let Err(e) = clipboard::copy_and_paste(&text, job.auto_inject) {
+    if let Err(e) = clipboard::copy_and_paste(&text, job.auto_paste, job.auto_inject) {
         warn!("Failed to copy: {}", e);
     }
 

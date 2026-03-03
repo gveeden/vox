@@ -23,6 +23,30 @@ A fast, lightweight voice transcription tool supporting multiple state-of-the-ar
 - ONNX model files (see Model Setup below)
 - Microphone access
 
+### Linux System Dependencies
+
+Install the required GTK/GLib development libraries before building:
+
+**Fedora / RHEL / CentOS:**
+```bash
+sudo dnf install -y \
+  gtk3-devel \
+  gdk-pixbuf2-devel \
+  cairo-gobject-devel \
+  glib2-devel \
+  pkgconf-pkg-config
+```
+
+**Ubuntu / Debian:**
+```bash
+sudo apt install -y \
+  libgtk-3-dev \
+  libgdk-pixbuf-2.0-dev \
+  libcairo-gobject2 \
+  libglib2.0-dev \
+  pkg-config
+```
+
 ## Installation
 
 ### Linux (Quick Install)
@@ -226,6 +250,14 @@ modifier_key = "Alt"
 
 # Trigger key: Space, Return, Tab, Escape
 trigger_key = "Space"
+
+# Whether to automatically paste after transcription (default: true)
+# Set to false to only copy to clipboard; paste manually with Ctrl+V
+auto_paste = true
+
+# Whether to type text character-by-character via evdev instead of simulating Ctrl+V (default: false)
+# Requires: sudo setcap cap_dac_override+ep ~/.local/bin/clevernote-daemon
+auto_inject = false
 ```
 
 The daemon will create a default config on first run if one doesn't exist.

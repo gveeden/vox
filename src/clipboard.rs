@@ -13,7 +13,7 @@ use crate::inject_linux;
 use std::process::Command;
 
 /// Copy text to clipboard and optionally inject it
-pub fn copy_and_paste(text: &str, auto_inject: bool) -> Result<()> {
+pub fn copy_and_paste(text: &str, auto_paste: bool, auto_inject: bool) -> Result<()> {
     // Copy to clipboard as backup
     #[cfg(target_os = "linux")]
     {
@@ -54,35 +54,39 @@ pub fn copy_and_paste(text: &str, auto_inject: bool) -> Result<()> {
     // Auto-paste using system tools
     #[cfg(target_os = "linux")]
     {
-        if auto_inject {
-            // Try evdev text injection (requires CAP_DAC_OVERRIDE)
-            match inject_linux::inject_text(text) {
-                Ok(_) => {
-                    println!("⌨️  Typed text (evdev+XKB)");
+        if auto_paste {
+            if auto_inject {
+                // Try evdev text injection (requires CAP_DAC_OVERRIDE)
+                match inject_linux::inject_text(text) {
+                    Ok(_) => {
+                        println!("⌨️  Typed text (evdev+XKB)");
+                    }
+                    Err(e) => {
+                        warn!("Failed to auto-type via evdev: {}", e);
+                        println!("⚠️  Auto-type failed - Press Ctrl+V to paste");
+                        println!("   To enable: sudo setcap \"cap_dac_override+p\" $(which clevernote-daemon)");
+                    }
                 }
-                Err(e) => {
-                    warn!("Failed to auto-type via evdev: {}", e);
-                    println!("⚠️  Auto-type failed - Press Ctrl+V to paste");
-                    println!("   To enable: sudo setcap \"cap_dac_override+p\" $(which clevernote-daemon)");
+            } else {
+                // Try to simulate paste with evdev (detects terminal vs regular app)
+                match inject_linux::inject_paste() {
+                    Ok(_) => {
+                        println!("⌨️  Auto-pasted");
+                    }
+                    Err(e) => {
+                        warn!("Failed to auto-paste: {}", e);
+                        println!("💡 Press Ctrl+V to paste (or Ctrl+Shift+V in terminals)");
+                    }
                 }
             }
         } else {
-            // Try to simulate paste with evdev (detects terminal vs regular app)
-            match inject_linux::inject_paste() {
-                Ok(_) => {
-                    println!("⌨️  Auto-pasted");
-                }
-                Err(e) => {
-                    warn!("Failed to auto-paste: {}", e);
-                    println!("💡 Press Ctrl+V to paste (or Ctrl+Shift+V in terminals)");
-                }
-            }
+            println!("💡 Press Ctrl+V to paste (or Ctrl+Shift+V in terminals)");
         }
     }
 
     #[cfg(target_os = "macos")]
     {
-        if auto_inject {
+        if auto_paste {
             let mut enigo = Enigo::new(&Settings::default())?;
             enigo.key(Key::Meta, Direction::Press)?;
             enigo.key(Key::Unicode('v'), Direction::Click)?;
@@ -95,7 +99,7 @@ pub fn copy_and_paste(text: &str, auto_inject: bool) -> Result<()> {
 
     #[cfg(target_os = "windows")]
     {
-        if auto_inject {
+        if auto_paste {
             let mut enigo = Enigo::new(&Settings::default())?;
             enigo.key(Key::Control, Direction::Press)?;
             enigo.key(Key::Unicode('v'), Direction::Click)?;
