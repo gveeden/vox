@@ -1,5 +1,6 @@
 /// CleverNote daemon - handles recording, transcription, and IPC
 use chrono::Local;
+use clap::Parser;
 use clevernote::{
     audio::AudioCapture,
     clipboard, convert_to_mono, get_config_dir,
@@ -20,6 +21,14 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[derive(Parser, Debug)]
+#[command(author, version, about = "CleverNote daemon", long_about = None)]
+struct Args {
+    /// Input device name to use for recording (runtime-only override)
+    #[arg(long)]
+    device: Option<String>,
+}
+
 #[derive(Deserialize, Serialize)]
 struct DaemonConfig {
     #[serde(default = "default_modifier_key")]
@@ -32,6 +41,8 @@ struct DaemonConfig {
     auto_inject: bool,
     #[serde(default = "default_active_model")]
     active_model: String,
+    #[serde(default = "default_input_device")]
+    input_device: Option<String>,
 }
 
 fn default_modifier_key() -> String {
@@ -54,6 +65,10 @@ fn default_active_model() -> String {
     "parakeet-tdt-0.6b-v3-int8".to_string()
 }
 
+fn default_input_device() -> Option<String> {
+    None
+}
+
 impl Default for DaemonConfig {
     fn default() -> Self {
         Self {
@@ -62,6 +77,7 @@ impl Default for DaemonConfig {
             auto_paste: default_auto_paste(),
             auto_inject: default_auto_inject(),
             active_model: default_active_model(),
+            input_device: default_input_device(),
         }
     }
 }
@@ -175,6 +191,8 @@ impl DaemonState {
 }
 
 fn main() -> Result<()> {
+    let args = Args::parse();
+
     // Initialize logger
     env_logger::Builder::from_default_env()
         .filter_level(log::LevelFilter::Info)
@@ -193,6 +211,23 @@ fn main() -> Result<()> {
         "⚙️  Config loaded: auto_paste={}, auto_inject={}, active_model={}",
         config.auto_paste, config.auto_inject, config.active_model
     );
+
+    let selected_input_device = if let Some(device) = args.device {
+        let normalized_device = device.trim().to_string();
+        if normalized_device.is_empty() {
+            return Err(eyre::eyre!("--device cannot be empty"));
+        }
+        Some(normalized_device)
+    } else if let Some(configured_device) = config.input_device.clone() {
+        let normalized_device = configured_device.trim().to_string();
+        if normalized_device.is_empty() {
+            None
+        } else {
+            Some(normalized_device)
+        }
+    } else {
+        None
+    };
 
     // Get models directory
     let models_dir = clevernote::get_models_dir();
@@ -223,7 +258,7 @@ fn main() -> Result<()> {
 
     // Initialize audio capture
     info!("Initializing audio capture...");
-    let audio_capture = AudioCapture::new()?;
+    let audio_capture = AudioCapture::new(selected_input_device.as_deref())?;
     let device_sample_rate = audio_capture.device_sample_rate();
 
     // Start audio stream (paused initially)

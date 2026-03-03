@@ -42,16 +42,57 @@ pub struct AudioCapture {
 }
 
 impl AudioCapture {
-    pub fn new() -> Result<Self> {
+    pub fn new(input_device: Option<&str>) -> Result<Self> {
         let host = cpal::default_host();
-        let device = host
-            .default_input_device()
-            .ok_or_else(|| eyre::eyre!("No input device available"))?;
 
-        println!("Input device: {}", device.name()?);
+        let device = if let Some(device_name) = input_device {
+            let normalized_device_name = device_name.trim();
+            if normalized_device_name.is_empty() {
+                return Err(eyre::eyre!("Input device name cannot be empty"));
+            }
+
+            let mut matching_device: Option<Device> = None;
+            let mut available_devices: Vec<String> = Vec::new();
+
+            for device in host
+                .input_devices()
+                .map_err(|e| eyre::eyre!("Failed to enumerate input devices: {}", e))?
+            {
+                let name = device.name().unwrap_or_else(|_| "<unknown>".to_string());
+                available_devices.push(name.clone());
+
+                if name == normalized_device_name
+                    || name.eq_ignore_ascii_case(normalized_device_name)
+                {
+                    matching_device = Some(device);
+                    break;
+                }
+            }
+
+            match matching_device {
+                Some(device) => device,
+                None => {
+                    let available = if available_devices.is_empty() {
+                        "(none)".to_string()
+                    } else {
+                        available_devices.join(", ")
+                    };
+                    return Err(eyre::eyre!(
+                        "Input device '{}' not found. Available devices: {}",
+                        normalized_device_name,
+                        available
+                    ));
+                }
+            }
+        } else {
+            host.default_input_device()
+                .ok_or_else(|| eyre::eyre!("No input device available"))?
+        };
+
+        log::info!("Selected input device: {}", device.name()?);
 
         let config = device.default_input_config()?;
-        println!("Default input config: {:?}", config);
+        log::info!("Default input config: {:?}", config);
 
         let device_sample_rate = config.sample_rate().0;
         let channels = config.channels();
