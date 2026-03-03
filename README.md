@@ -230,11 +230,13 @@ Models are downloaded automatically on first use.
 Daemon:
   -m, --model <MODEL_ID>           Model ID from registry (e.g., moonshine-tiny, sensevoice-small)
   -c, --config <FILE>              Path to config file [default: ~/.config/clevernote/config.toml]
+  --device <NAME>                  Input device name (runtime override, does not modify config)
   -h, --help                       Print help
   -V, --version                    Print version
 
 Client:
   toggle                           Start/stop recording
+  device list                      List local input audio devices (no daemon IPC)
   status                           Check daemon status
   quit                             Stop daemon
   -h, --help                       Print help
@@ -258,6 +260,10 @@ auto_paste = true
 # Whether to type text character-by-character via evdev instead of simulating Ctrl+V (default: false)
 # Requires: sudo setcap cap_dac_override+ep ~/.local/bin/clevernote-daemon
 auto_inject = false
+
+# Optional input device name for daemon recording
+# If unset, default_input_device() is used
+input_device = "Built-in Microphone"
 ```
 
 The daemon will create a default config on first run if one doesn't exist.
