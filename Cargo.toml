@@ -58,6 +58,8 @@ wayland-protocols-misc = { version = "0.2", features = ["client"] }
 memmap2 = "0.9"
 tempfile = "3.8"
 nix = { version = "0.28", features = ["fs"] }
+smithay-client-toolkit = { version = "0.20", default-features = false, features = ["calloop", "calloop-wayland-source"] }
+tiny-skia = "0.11"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"

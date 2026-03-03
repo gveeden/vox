@@ -199,7 +199,7 @@ impl WhisperBackend {
         let shape = mel.shape();
         let dims = [shape[0], shape[1], shape[2]];
         let data = mel.iter().copied().collect::<Vec<f32>>();
-        let input_value = Value::from_array((dims.as_ref(), data))?;
+        let input_value = Value::from_array((dims.as_ref() as &[usize], data))?;
 
         log::debug!("Encoder input shape: {:?}", dims);
 
@@ -274,11 +274,14 @@ impl WhisperBackend {
         let mut inputs: Vec<(String, Value)> = Vec::with_capacity(self.decoder_schema.slots.len());
         for (name, kind) in &self.decoder_schema.slots {
             let value: Value = match kind {
-                DecoderInputKind::InputIds => {
-                    Value::from_array((input_ids_dims.as_ref(), input_ids_data.clone()))?.into()
-                }
+                DecoderInputKind::InputIds => Value::from_array((
+                    input_ids_dims.as_ref() as &[usize],
+                    input_ids_data.clone(),
+                ))?
+                .into(),
                 DecoderInputKind::EncoderHidden => {
-                    Value::from_array((encoder_dims.as_ref(), encoder_data.clone()))?.into()
+                    Value::from_array((encoder_dims.as_ref() as &[usize], encoder_data.clone()))?
+                        .into()
                 }
                 DecoderInputKind::DecoderKV => Value::from_array((
                     [batch_size, num_heads, past_seq_len, head_dim],

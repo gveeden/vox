@@ -321,7 +321,6 @@ fn main() -> Result<()> {
     info!("✅ CleverNote daemon ready!");
     info!("Connect with: clevernote toggle");
 
-    // Accept connections (no threading - keep stream in main thread)
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
@@ -343,14 +342,12 @@ fn main() -> Result<()> {
             }
         }
 
-        // Check for shutdown signal
         if daemon_state.shutdown.load(Ordering::Relaxed) {
             info!("Shutting down daemon...");
             break;
         }
     }
 
-    // Cleanup
     if socket_path.exists() {
         fs::remove_file(&socket_path)?;
     }
@@ -723,6 +720,9 @@ fn process_transcription_with_backend(
         "💾 Updated history.json ({} total)",
         history.transcripts.len()
     );
+
+    // Signal overlay: transcription is done (shows checkmark, auto-closes after 1.5 s)
+    clevernote::recording_overlay::show_transcription_complete();
 
     // Copy to clipboard and optionally inject
     if let Err(e) = clipboard::copy_and_paste(&text, job.auto_paste, job.auto_inject) {

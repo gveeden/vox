@@ -41,6 +41,18 @@ pub struct AudioCapture {
     pub state: Arc<Mutex<RecordingState>>,
 }
 
+// SAFETY: cpal's Stream is marked !Send as a conservative cross-platform
+// measure. On Linux/ALSA the underlying stream callbacks run on cpal's own
+// internal thread; play() and pause() are safe to call from any thread.
+// We only ever hold one AudioCapture and call start/pause from the socket
+// worker thread while cpal handles the callback thread internally.
+#[allow(unsafe_code)]
+unsafe impl Send for AudioCapture {}
+
+/// Type alias kept for API compatibility; on this codebase AudioCapture is
+/// used directly from all threads.
+pub type AudioController = AudioCapture;
+
 impl AudioCapture {
     pub fn new(input_device: Option<&str>) -> Result<Self> {
         let host = cpal::default_host();
