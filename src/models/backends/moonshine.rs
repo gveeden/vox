@@ -18,7 +18,7 @@ pub struct MoonshineBackend {
 }
 
 impl MoonshineBackend {
-    pub fn new<P: AsRef<Path>>(model_path: P) -> Result<Self> {
+    pub fn new<P: AsRef<Path>>(model_path: P, intra_threads: usize) -> Result<Self> {
         let path = model_path.as_ref();
 
         // Determine encoder path
@@ -46,10 +46,12 @@ impl MoonshineBackend {
 
         // Load ONNX models
         let encoder = Session::builder()?
+            .with_intra_threads(intra_threads)?
             .commit_from_file(&encoder_path)
             .map_err(|e| anyhow!("Failed to load Moonshine encoder: {}", e))?;
 
         let decoder = Session::builder()?
+            .with_intra_threads(intra_threads)?
             .commit_from_file(&decoder_path)
             .map_err(|e| anyhow!("Failed to load Moonshine decoder: {}", e))?;
 

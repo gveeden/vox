@@ -8,7 +8,14 @@ pub enum Command {
     /// Start or stop recording (toggle)
     Toggle,
     /// Start recording (push-to-talk)
-    Start,
+    Start {
+        /// Override config's process_with_llm for this recording only.
+        /// None = use config value; Some(true/false) = force on/off.
+        use_llm: Option<bool>,
+        /// Override the LLM prompt for this recording only.
+        /// None = use config value.
+        prompt_override: Option<String>,
+    },
     /// Stop recording (push-to-talk)
     Stop,
     /// Get current daemon status

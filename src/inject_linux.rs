@@ -82,6 +82,146 @@ fn build_char_map() -> Result<CharMap> {
     Ok(char_map)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Persistent paste device
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A persistent uinput device for Ctrl+V / Ctrl+Shift+V injection.
+///
+/// Create once at daemon startup (paying the one-time 300 ms Wayland
+/// registration cost then) and reuse across all recordings.  Each call to
+/// `paste()` only needs ~30 ms of inter-key delays instead of 300 + 400 ms.
+#[cfg(target_os = "linux")]
+pub struct PasteDevice {
+    device: evdev::uinput::VirtualDevice,
+}
+
+#[cfg(target_os = "linux")]
+impl PasteDevice {
+    /// Open the uinput device and wait for Wayland to register it.
+    pub fn new() -> Result<Self> {
+        use caps::{CapSet, Capability};
+        use log::info;
+
+        caps::raise(None, CapSet::Effective, Capability::CAP_DAC_OVERRIDE).map_err(|e| {
+            eyre::eyre!(
+                "Failed to raise CAP_DAC_OVERRIDE: {}\n\
+                 Run: sudo setcap \"cap_dac_override+p\" $(which clevernote-daemon)",
+                e
+            )
+        })?;
+
+        let mut keys = AttributeSet::<Key>::new();
+        keys.insert(Key::KEY_LEFTCTRL);
+        keys.insert(Key::KEY_LEFTSHIFT);
+        keys.insert(Key::KEY_V);
+
+        let device_result = VirtualDeviceBuilder::new()?
+            .name("CleverNote Paste")
+            .with_keys(&keys)?
+            .build();
+
+        caps::drop(None, CapSet::Effective, Capability::CAP_DAC_OVERRIDE).ok();
+
+        let device = device_result?;
+
+        info!("Virtual keyboard device created — waiting for Wayland registration...");
+        // Pay the one-time registration cost here at startup.
+        thread::sleep(Duration::from_millis(300));
+        info!("Virtual keyboard device ready");
+
+        Ok(Self { device })
+    }
+
+    /// Send Ctrl+V (or Ctrl+Shift+V for terminal windows).
+    /// No registration delay — the device is already known to the compositor.
+    pub fn paste(&mut self) -> Result<()> {
+        use log::info;
+
+        let needs_shift = is_terminal_window();
+        if needs_shift {
+            info!("Detected terminal window, using Ctrl+Shift+V");
+        } else {
+            info!("Using Ctrl+V");
+        }
+
+        let dev = &mut self.device;
+
+        // Press Ctrl
+        dev.emit(&[evdev::InputEvent::new(
+            EventType::KEY,
+            Key::KEY_LEFTCTRL.code(),
+            1,
+        )])?;
+        dev.emit(&[evdev::InputEvent::new(EventType::SYNCHRONIZATION, 0, 0)])?;
+        thread::sleep(Duration::from_millis(10));
+
+        if needs_shift {
+            dev.emit(&[evdev::InputEvent::new(
+                EventType::KEY,
+                Key::KEY_LEFTSHIFT.code(),
+                1,
+            )])?;
+            dev.emit(&[evdev::InputEvent::new(EventType::SYNCHRONIZATION, 0, 0)])?;
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        // Press V
+        dev.emit(&[evdev::InputEvent::new(EventType::KEY, Key::KEY_V.code(), 1)])?;
+        dev.emit(&[evdev::InputEvent::new(EventType::SYNCHRONIZATION, 0, 0)])?;
+        thread::sleep(Duration::from_millis(10));
+
+        // Release V
+        dev.emit(&[evdev::InputEvent::new(EventType::KEY, Key::KEY_V.code(), 0)])?;
+        dev.emit(&[evdev::InputEvent::new(EventType::SYNCHRONIZATION, 0, 0)])?;
+        thread::sleep(Duration::from_millis(10));
+
+        if needs_shift {
+            dev.emit(&[evdev::InputEvent::new(
+                EventType::KEY,
+                Key::KEY_LEFTSHIFT.code(),
+                0,
+            )])?;
+            dev.emit(&[evdev::InputEvent::new(EventType::SYNCHRONIZATION, 0, 0)])?;
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        // Release Ctrl
+        dev.emit(&[evdev::InputEvent::new(
+            EventType::KEY,
+            Key::KEY_LEFTCTRL.code(),
+            0,
+        )])?;
+        dev.emit(&[evdev::InputEvent::new(EventType::SYNCHRONIZATION, 0, 0)])?;
+
+        if needs_shift {
+            info!("⌨️  Sent Ctrl+Shift+V via evdev");
+        } else {
+            info!("⌨️  Sent Ctrl+V via evdev");
+        }
+
+        Ok(())
+    }
+}
+
+// Non-Linux stub
+#[cfg(not(target_os = "linux"))]
+pub struct PasteDevice;
+
+#[cfg(not(target_os = "linux"))]
+impl PasteDevice {
+    pub fn new() -> Result<Self> {
+        Err(eyre::eyre!("evdev injection only available on Linux"))
+    }
+    pub fn paste(&mut self) -> Result<()> {
+        Err(eyre::eyre!("evdev injection only available on Linux"))
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// One-shot inject_text (for auto_inject / direct typing mode)
+// ─────────────────────────────────────────────────────────────────────────────
+
 #[cfg(target_os = "linux")]
 pub fn inject_text(text: &str) -> Result<()> {
     use log::{info, warn};
@@ -254,7 +394,7 @@ fn is_terminal_window() -> bool {
     false
 }
 
-/// Inject Ctrl+V or Ctrl+Shift+V based on focused window
+/// One-shot Ctrl+V injection (fallback when no persistent PasteDevice is available).
 #[cfg(target_os = "linux")]
 pub fn inject_paste() -> Result<()> {
     use log::info;

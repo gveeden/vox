@@ -67,7 +67,7 @@ struct WhisperSpecialTokens {
 }
 
 impl WhisperBackend {
-    pub fn new<P: AsRef<Path>>(model_path: P) -> Result<Self> {
+    pub fn new<P: AsRef<Path>>(model_path: P, intra_threads: usize) -> Result<Self> {
         let path = model_path.as_ref();
 
         // Find encoder and decoder files
@@ -99,10 +99,14 @@ impl WhisperBackend {
         let tokenizer = WhisperTokenizer::from_hf_tokenizer(&tokenizer_path)?;
 
         // Load encoder session
-        let encoder = Session::builder()?.commit_from_file(&encoder_path)?;
+        let encoder = Session::builder()?
+            .with_intra_threads(intra_threads)?
+            .commit_from_file(&encoder_path)?;
 
         // Load decoder session
-        let decoder = Session::builder()?.commit_from_file(&decoder_path)?;
+        let decoder = Session::builder()?
+            .with_intra_threads(intra_threads)?
+            .commit_from_file(&decoder_path)?;
 
         let model_name = path
             .file_name()

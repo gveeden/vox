@@ -27,6 +27,30 @@ struct Args {
     /// Input device name to use for recording (runtime-only override)
     #[arg(long)]
     device: Option<String>,
+    /// Enable verbose logging (includes ORT memory allocator messages and
+    /// per-token LLM debug output)
+    #[arg(long, short)]
+    verbose: bool,
+}
+
+/// Read the current process RSS (resident set size) from /proc/self/status.
+/// Returns MB as f64, or 0.0 if unavailable (non-Linux platforms).
+fn rss_mb() -> f64 {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
+            for line in status.lines() {
+                if line.starts_with("VmRSS:") {
+                    if let Some(kb_str) = line.split_whitespace().nth(1) {
+                        if let Ok(kb) = kb_str.parse::<f64>() {
+                            return kb / 1024.0;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    0.0
 }
 
 #[derive(Deserialize, Serialize)]
@@ -43,6 +67,18 @@ struct DaemonConfig {
     active_model: String,
     #[serde(default = "default_input_device")]
     input_device: Option<String>,
+    /// Process every transcription through the LLM by default.
+    /// The --llm flag on `clevernote start` overrides this per-recording.
+    /// The LLM model is always loaded in the background if llm_model is set
+    /// and has been downloaded — this flag only controls default behaviour.
+    #[serde(default = "default_process_transcription", alias = "process_with_llm")]
+    process_transcription: bool,
+    #[serde(default = "default_process_prompt")]
+    process_prompt: String,
+    #[serde(default = "default_llm_model")]
+    llm_model: String,
+    #[serde(default = "default_intra_threads")]
+    intra_threads: usize,
 }
 
 fn default_modifier_key() -> String {
@@ -69,6 +105,22 @@ fn default_input_device() -> Option<String> {
     None
 }
 
+fn default_process_transcription() -> bool {
+    false
+}
+
+fn default_process_prompt() -> String {
+    "Clean up the following voice transcription: remove filler words (um, uh, like, you know), fix grammar and punctuation, and return only the cleaned text with no additional commentary: {text}".to_string()
+}
+
+fn default_llm_model() -> String {
+    "qwen3.5-0.8b-fp16".to_string()
+}
+
+fn default_intra_threads() -> usize {
+    4
+}
+
 impl Default for DaemonConfig {
     fn default() -> Self {
         Self {
@@ -78,6 +130,10 @@ impl Default for DaemonConfig {
             auto_inject: default_auto_inject(),
             active_model: default_active_model(),
             input_device: default_input_device(),
+            process_transcription: default_process_transcription(),
+            process_prompt: default_process_prompt(),
+            llm_model: default_llm_model(),
+            intra_threads: default_intra_threads(),
         }
     }
 }
@@ -152,6 +208,20 @@ struct TranscriptionJob {
     output_dir: PathBuf,
     auto_paste: bool,
     auto_inject: bool,
+    /// When the recording stop signal was received (for end-to-end latency).
+    received_at: Instant,
+    /// Per-recording LLM override. None = use config value.
+    use_llm: Option<bool>,
+    /// Per-recording prompt override. None = use config value.
+    prompt_override: Option<String>,
+}
+
+/// A request sent to the LLM worker thread.
+struct LlmRequest {
+    text: String,
+    prompt_template: String,
+    /// Sender to return the processed result (or error) on.
+    reply: std::sync::mpsc::SyncSender<Result<String, String>>,
 }
 
 struct DaemonState {
@@ -162,6 +232,15 @@ struct DaemonState {
     overlay_close_handle: std::sync::Mutex<Option<Arc<AtomicBool>>>,
     active_model: std::sync::Mutex<String>,
     config_path: PathBuf,
+    /// LLM override set by `handle_start` for the current recording.
+    /// None = use config value; Some(true/false) = force on/off.
+    pending_use_llm: std::sync::Mutex<Option<bool>>,
+    /// Prompt override set by `handle_start` for the current recording.
+    pending_prompt_override: std::sync::Mutex<Option<String>>,
+    /// Persistent uinput paste device (Linux only). Created once at startup so
+    /// the Wayland registration cost is paid then, not at each paste.
+    #[cfg(target_os = "linux")]
+    paste_device: std::sync::Mutex<Option<clevernote::inject_linux::PasteDevice>>,
 }
 
 impl DaemonState {
@@ -174,6 +253,10 @@ impl DaemonState {
             overlay_close_handle: std::sync::Mutex::new(None),
             active_model: std::sync::Mutex::new(active_model),
             config_path,
+            pending_use_llm: std::sync::Mutex::new(None),
+            pending_prompt_override: std::sync::Mutex::new(None),
+            #[cfg(target_os = "linux")]
+            paste_device: std::sync::Mutex::new(None),
         }
     }
 
@@ -193,9 +276,26 @@ impl DaemonState {
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    // Initialize logger
+    // Initialize logger — verbose mode also shows DEBUG from this crate and
+    // lets the ORT arena allocator messages through (they log at INFO in the
+    // ort::logging target).
+    let log_level = if args.verbose {
+        log::LevelFilter::Debug
+    } else {
+        log::LevelFilter::Info
+    };
     env_logger::Builder::from_default_env()
-        .filter_level(log::LevelFilter::Info)
+        .filter_level(log::LevelFilter::Warn) // silence noisy deps by default
+        .filter_module("clevernote", log_level)
+        .filter_module("clevernote_daemon", log_level)
+        .filter_module(
+            "ort",
+            if args.verbose {
+                log::LevelFilter::Info
+            } else {
+                log::LevelFilter::Warn
+            },
+        )
         .init();
 
     info!("CleverNote daemon starting...");
@@ -268,6 +368,69 @@ fn main() -> Result<()> {
 
     info!("Audio capture initialized");
 
+    // Create persistent paste device (Wayland registration cost paid once here).
+    // If creation fails (e.g. capability not granted) we fall back to the
+    // one-shot path for each paste.
+    #[cfg(target_os = "linux")]
+    let initial_paste_device: Option<clevernote::inject_linux::PasteDevice> = {
+        if config.auto_paste && !config.auto_inject {
+            match clevernote::inject_linux::PasteDevice::new() {
+                Ok(dev) => {
+                    info!("Persistent paste device ready");
+                    Some(dev)
+                }
+                Err(e) => {
+                    warn!(
+                        "Could not create persistent paste device (will use fallback): {}",
+                        e
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    };
+
+    // Start LLM worker if the configured model has been downloaded.
+    // The worker is loaded independently of process_transcription — that flag
+    // only controls whether LLM runs by default; --llm on `start` also triggers it.
+    let llm_tx: Option<std::sync::mpsc::Sender<LlmRequest>> = {
+        let llm_model_id = config.llm_model.clone();
+        match clevernote::models::ensure_model_downloaded(&llm_model_id, &models_dir, false) {
+            Ok(llm_path) => {
+                info!(
+                    "Loading LLM model ({}) from: {} (RSS before: {:.0} MB)",
+                    llm_model_id,
+                    llm_path.display(),
+                    rss_mb()
+                );
+                let (ltx, lrx) = std::sync::mpsc::channel::<LlmRequest>();
+                // Look up backend type from registry so Gemma vs Qwen dispatch works correctly
+                let llm_registry = clevernote::models::ModelRegistry::load();
+                let llm_backend_type = llm_registry
+                    .ok()
+                    .and_then(|r| r.get_model(&llm_model_id).map(|m| m.backend.clone()))
+                    .unwrap_or_else(|| "llm".to_string());
+                let llm_intra_threads = config.intra_threads;
+                thread::spawn(move || {
+                    if let Err(e) = llm_worker(lrx, llm_path, &llm_backend_type, llm_intra_threads)
+                    {
+                        error!("LLM worker error: {}", e);
+                    }
+                });
+                Some(ltx)
+            }
+            Err(e) => {
+                info!(
+                    "LLM model '{}' not downloaded, LLM post-processing unavailable ({})",
+                    llm_model_id, e
+                );
+                None
+            }
+        }
+    };
+
     // Create transcription channel
     let (tx, rx) = std::sync::mpsc::channel::<TranscriptionJob>();
 
@@ -276,13 +439,31 @@ fn main() -> Result<()> {
         config.active_model.clone(),
         config_path.clone(),
     ));
+    // Seed the persistent paste device into daemon state so the transcription
+    // worker thread can access it.
+    #[cfg(target_os = "linux")]
+    {
+        *daemon_state.paste_device.lock().unwrap() = initial_paste_device;
+    }
     let daemon_state_clone = daemon_state.clone();
 
     // Spawn transcription thread
     info!("Loading transcription model...");
     let model_id = config.active_model.clone();
+    let process_prompt = config.process_prompt.clone();
+    let process_transcription = config.process_transcription;
+    let intra_threads = config.intra_threads;
     thread::spawn(move || {
-        if let Err(e) = transcription_worker(rx, model_path, model_id, daemon_state_clone) {
+        if let Err(e) = transcription_worker(
+            rx,
+            model_path,
+            model_id,
+            daemon_state_clone,
+            llm_tx,
+            process_prompt,
+            process_transcription,
+            intra_threads,
+        ) {
             error!("Transcription worker error: {}", e);
         }
     });
@@ -384,7 +565,10 @@ fn handle_client(
             auto_inject,
             daemon_state,
         ),
-        Command::Start => handle_start(audio_capture, daemon_state),
+        Command::Start {
+            use_llm,
+            prompt_override,
+        } => handle_start(audio_capture, daemon_state, use_llm, prompt_override),
         Command::Stop => handle_stop(
             audio_capture,
             tx,
@@ -415,7 +599,12 @@ fn handle_client(
     Ok(())
 }
 
-fn handle_start(audio_capture: &AudioCapture, daemon_state: &Arc<DaemonState>) -> Response {
+fn handle_start(
+    audio_capture: &AudioCapture,
+    daemon_state: &Arc<DaemonState>,
+    use_llm: Option<bool>,
+    prompt_override: Option<String>,
+) -> Response {
     let mut state = audio_capture.state.lock().unwrap();
 
     if state.is_recording {
@@ -430,6 +619,10 @@ fn handle_start(audio_capture: &AudioCapture, daemon_state: &Arc<DaemonState>) -
     }
 
     info!("🎙️  Recording started");
+
+    // Store per-recording LLM overrides for handle_stop to pick up
+    *daemon_state.pending_use_llm.lock().unwrap() = use_llm;
+    *daemon_state.pending_prompt_override.lock().unwrap() = prompt_override;
 
     // Show overlay window and store close handle
     let close_handle = clevernote::recording_overlay::show_recording_overlay();
@@ -469,6 +662,10 @@ fn handle_stop(
     }
     info!("handle_stop: Overlay hidden, continuing...");
 
+    // Consume per-recording LLM overrides set by handle_start
+    let use_llm = daemon_state.pending_use_llm.lock().unwrap().take();
+    let prompt_override = daemon_state.pending_prompt_override.lock().unwrap().take();
+
     // Send to transcription thread
     let device_channels = audio_capture.channels();
     let job = TranscriptionJob {
@@ -478,6 +675,9 @@ fn handle_stop(
         output_dir: output_dir.clone(),
         auto_paste,
         auto_inject,
+        received_at: Instant::now(),
+        use_llm,
+        prompt_override,
     };
 
     info!("handle_stop: Sending job to transcription thread");
@@ -503,7 +703,8 @@ fn handle_toggle(
     drop(state);
 
     if !is_recording {
-        handle_start(audio_capture, daemon_state)
+        // Toggle has no LLM override — use config values
+        handle_start(audio_capture, daemon_state, None, None)
     } else {
         handle_stop(
             audio_capture,
@@ -623,11 +824,118 @@ fn handle_set_model(model_id: &str, daemon_state: &Arc<DaemonState>) -> Response
     })
 }
 
+/// A trait object wrapper so we can hold either LlmBackend or GemmaBackend
+/// in the same worker loop without boxing each call site.
+trait LlmProcessor: Send {
+    fn process(&mut self, text: &str, prompt_template: &str) -> anyhow::Result<String>;
+}
+
+impl LlmProcessor for clevernote::models::backends::llm::LlmBackend {
+    fn process(&mut self, text: &str, prompt_template: &str) -> anyhow::Result<String> {
+        self.process(text, prompt_template)
+    }
+}
+
+impl LlmProcessor for clevernote::models::backends::gemma::GemmaBackend {
+    fn process(&mut self, text: &str, prompt_template: &str) -> anyhow::Result<String> {
+        self.process(text, prompt_template)
+    }
+}
+
+impl LlmProcessor for clevernote::models::backends::qwen3::Qwen3Backend {
+    fn process(&mut self, text: &str, prompt_template: &str) -> anyhow::Result<String> {
+        self.process(text, prompt_template)
+    }
+}
+
+impl LlmProcessor for clevernote::models::backends::gemma3::Gemma3Backend {
+    fn process(&mut self, text: &str, prompt_template: &str) -> anyhow::Result<String> {
+        self.process(text, prompt_template)
+    }
+}
+
+fn llm_worker(
+    rx: std::sync::mpsc::Receiver<LlmRequest>,
+    model_path: PathBuf,
+    backend_type: &str,
+    intra_threads: usize,
+) -> Result<()> {
+    info!(
+        "Loading LLM model ({}) from: {} (RSS before: {:.0} MB)",
+        backend_type,
+        model_path.display(),
+        rss_mb()
+    );
+
+    let mut backend: Box<dyn LlmProcessor> = match backend_type {
+        "gemma" => {
+            use clevernote::models::backends::gemma::GemmaBackend;
+            match GemmaBackend::new(&model_path, intra_threads) {
+                Ok(b) => Box::new(b),
+                Err(e) => {
+                    error!("Failed to load Gemma model: {}", e);
+                    return Err(eyre::eyre!("Failed to load Gemma model: {}", e));
+                }
+            }
+        }
+        "qwen3" => {
+            use clevernote::models::backends::qwen3::Qwen3Backend;
+            match Qwen3Backend::new(&model_path, intra_threads) {
+                Ok(b) => Box::new(b),
+                Err(e) => {
+                    error!("Failed to load Qwen3 model: {}", e);
+                    return Err(eyre::eyre!("Failed to load Qwen3 model: {}", e));
+                }
+            }
+        }
+        "gemma3" => {
+            use clevernote::models::backends::gemma3::Gemma3Backend;
+            match Gemma3Backend::new(&model_path, intra_threads) {
+                Ok(b) => Box::new(b),
+                Err(e) => {
+                    error!("Failed to load Gemma3 model: {}", e);
+                    return Err(eyre::eyre!("Failed to load Gemma3 model: {}", e));
+                }
+            }
+        }
+        _ => {
+            // Default: Qwen3.5 hybrid LlmBackend
+            use clevernote::models::backends::llm::LlmBackend;
+            match LlmBackend::new(&model_path, intra_threads) {
+                Ok(b) => Box::new(b),
+                Err(e) => {
+                    error!("Failed to load LLM model: {}", e);
+                    return Err(eyre::eyre!("Failed to load LLM model: {}", e));
+                }
+            }
+        }
+    };
+
+    info!("LLM model loaded and ready — RSS: {:.0} MB", rss_mb());
+
+    while let Ok(req) = rx.recv() {
+        let result = match backend.process(&req.text, &req.prompt_template) {
+            Ok(processed) => Ok(processed),
+            Err(e) => {
+                error!("LLM processing error: {}", e);
+                Err(format!("{}", e))
+            }
+        };
+        let _ = req.reply.send(result);
+    }
+
+    Ok(())
+}
+
 fn transcription_worker(
     rx: std::sync::mpsc::Receiver<TranscriptionJob>,
     model_path: PathBuf,
     model_id: String,
     daemon_state: Arc<DaemonState>,
+    llm_tx: Option<std::sync::mpsc::Sender<LlmRequest>>,
+    process_prompt: String,
+    process_transcription: bool,
+    intra_threads: usize,
 ) -> Result<()> {
     use clevernote::models::backends::create_backend;
 
@@ -652,13 +960,14 @@ fn transcription_worker(
     };
 
     info!(
-        "Loading {} model from: {}",
+        "Loading {} model from: {} (RSS before: {:.0} MB)",
         backend_type,
-        model_path.display()
+        model_path.display(),
+        rss_mb()
     );
 
     // Create the appropriate backend
-    let mut backend = match create_backend(&model_path, &backend_type) {
+    let mut backend = match create_backend(&model_path, &backend_type, intra_threads) {
         Ok(b) => b,
         Err(e) => {
             error!("Failed to create backend: {}", e);
@@ -667,11 +976,22 @@ fn transcription_worker(
     };
 
     daemon_state.model_loaded.store(true, Ordering::Relaxed);
-    info!("Model '{}' loaded and ready", backend.model_name());
+    info!(
+        "Model '{}' loaded and ready — RSS: {:.0} MB",
+        backend.model_name(),
+        rss_mb()
+    );
 
     // Process jobs
     while let Ok(job) = rx.recv() {
-        if let Err(e) = process_transcription_with_backend(&mut *backend, job, &daemon_state) {
+        if let Err(e) = process_transcription_with_backend(
+            &mut *backend,
+            job,
+            &daemon_state,
+            llm_tx.as_ref(),
+            &process_prompt,
+            process_transcription,
+        ) {
             error!("Transcription error: {}", e);
         }
     }
@@ -683,6 +1003,9 @@ fn process_transcription_with_backend(
     backend: &mut dyn clevernote::models::backends::TranscriptionBackend,
     job: TranscriptionJob,
     daemon_state: &Arc<DaemonState>,
+    llm_tx: Option<&std::sync::mpsc::Sender<LlmRequest>>,
+    process_prompt: &str,
+    process_transcription: bool,
 ) -> Result<()> {
     let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
 
@@ -702,7 +1025,12 @@ fn process_transcription_with_backend(
         .map_err(|e| eyre::eyre!("Transcription failed: {}", e))?;
 
     let elapsed = start.elapsed();
-    info!("✅ Transcription complete in {:.2}s", elapsed.as_secs_f32());
+    let end_to_end = job.received_at.elapsed();
+    info!(
+        "✅ Transcription complete — model: {:.2}s, end-to-end: {:.2}s",
+        elapsed.as_secs_f32(),
+        end_to_end.as_secs_f32()
+    );
     info!("📝 Text: {}", text);
 
     // Add to history.json (keep last 100)
@@ -724,8 +1052,75 @@ fn process_transcription_with_backend(
     // Signal overlay: transcription is done (shows checkmark, auto-closes after 1.5 s)
     clevernote::recording_overlay::show_transcription_complete();
 
+    // Resolve effective LLM flag:
+    //   - job.use_llm (set by --llm / --prompt CLI flags) takes precedence
+    //   - otherwise fall back to the config's process_transcription default
+    let effective_use_llm = job.use_llm.unwrap_or(process_transcription);
+    let effective_prompt = job.prompt_override.as_deref().unwrap_or(process_prompt);
+
+    // Optionally run LLM post-processing before clipboard
+    let final_text = if effective_use_llm {
+        if let Some(ltx) = llm_tx {
+            info!("🧠 Running LLM post-processing...");
+            let llm_start = Instant::now();
+
+            let (reply_tx, reply_rx) = std::sync::mpsc::sync_channel::<Result<String, String>>(1);
+            let req = LlmRequest {
+                text: text.clone(),
+                prompt_template: effective_prompt.to_string(),
+                reply: reply_tx,
+            };
+
+            match ltx.send(req) {
+                Ok(()) => {
+                    // Wait up to 30 seconds for the LLM to respond
+                    match reply_rx.recv_timeout(Duration::from_secs(30)) {
+                        Ok(Ok(processed)) => {
+                            info!(
+                                "✅ LLM cleanup complete — {:.2}s (total: {:.2}s)",
+                                llm_start.elapsed().as_secs_f32(),
+                                job.received_at.elapsed().as_secs_f32()
+                            );
+                            info!("📝 LLM output: {}", processed);
+                            processed
+                        }
+                        Ok(Err(e)) => {
+                            warn!("LLM processing failed (using raw transcript): {}", e);
+                            text.clone()
+                        }
+                        Err(_) => {
+                            warn!("LLM processing timed out (using raw transcript)");
+                            text.clone()
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to send to LLM worker (using raw transcript): {}", e);
+                    text.clone()
+                }
+            }
+        } else {
+            warn!("--llm requested but LLM worker is not running (is llm_model configured and downloaded?)");
+            text.clone()
+        }
+    } else {
+        text.clone()
+    };
+
     // Copy to clipboard and optionally inject
-    if let Err(e) = clipboard::copy_and_paste(&text, job.auto_paste, job.auto_inject) {
+    #[cfg(target_os = "linux")]
+    let paste_result = {
+        let mut dev_guard = daemon_state.paste_device.lock().unwrap();
+        clipboard::copy_and_paste(
+            &final_text,
+            job.auto_paste,
+            job.auto_inject,
+            dev_guard.as_mut(),
+        )
+    };
+    #[cfg(not(target_os = "linux"))]
+    let paste_result = clipboard::copy_and_paste(&final_text, job.auto_paste, job.auto_inject);
+    if let Err(e) = paste_result {
         warn!("Failed to copy: {}", e);
     }
 

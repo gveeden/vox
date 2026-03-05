@@ -14,25 +14,26 @@ use super::TranscriptionBackend;
 pub fn create_backend<P: AsRef<Path>>(
     model_path: P,
     backend_type: &str,
+    intra_threads: usize,
 ) -> Result<Box<dyn TranscriptionBackend>> {
     let path = model_path.as_ref();
 
     match backend_type {
         "parakeet" | "parakeet-tdt" => {
             use super::parakeet::ParakeetBackend;
-            Ok(Box::new(ParakeetBackend::new(path)?))
+            Ok(Box::new(ParakeetBackend::new(path, intra_threads)?))
         }
         "whisper" => {
             use super::whisper::WhisperBackend;
-            Ok(Box::new(WhisperBackend::new(path)?))
+            Ok(Box::new(WhisperBackend::new(path, intra_threads)?))
         }
         "moonshine" => {
             use super::moonshine::MoonshineBackend;
-            Ok(Box::new(MoonshineBackend::new(path)?))
+            Ok(Box::new(MoonshineBackend::new(path, intra_threads)?))
         }
         "sensevoice" => {
             use super::sensevoice::SenseVoiceBackend;
-            Ok(Box::new(SenseVoiceBackend::new(path)?))
+            Ok(Box::new(SenseVoiceBackend::new(path, intra_threads)?))
         }
         _ => Err(anyhow!(
             "Unknown backend type: {}. Supported: parakeet, whisper, moonshine, sensevoice",

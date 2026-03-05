@@ -3005,6 +3005,7 @@ version = "2.0.0-rc.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4a5df903c0d2c07b56950f1058104ab0c8557159f2741782223704de9be73c3c"
 dependencies = [
+ "half",
  "ndarray 0.17.2",
  "ort-sys",
  "smallvec",
@@ -3067,6 +3068,7 @@ dependencies = [
  "eyre",
  "ffts",
  "global-hotkey",
+ "half",
  "hound",
  "indicatif",
  "log",

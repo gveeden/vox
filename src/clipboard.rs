@@ -12,14 +12,23 @@ use crate::inject_linux;
 #[cfg(target_os = "linux")]
 use std::process::Command;
 
-/// Copy text to clipboard and optionally inject it
-pub fn copy_and_paste(text: &str, auto_paste: bool, auto_inject: bool) -> Result<()> {
-    // Copy to clipboard as backup
+/// Copy text to clipboard and optionally inject it.
+///
+/// On Linux, pass a `PasteDevice` that was created at daemon startup to avoid
+/// the one-time 300 ms uinput registration delay on each invocation.
+/// If `paste_device` is `None` the old one-shot path is used as a fallback.
+pub fn copy_and_paste(
+    text: &str,
+    auto_paste: bool,
+    auto_inject: bool,
+    #[cfg(target_os = "linux")] paste_device: Option<&mut inject_linux::PasteDevice>,
+) -> Result<()> {
+    // ── Copy to clipboard ────────────────────────────────────────────────────
     #[cfg(target_os = "linux")]
     {
-        // Check if we're on Wayland
         if std::env::var("WAYLAND_DISPLAY").is_ok() {
-            // Use wl-copy for Wayland
+            // wl-copy is synchronous: it returns only after the clipboard is
+            // set, so no sleep is needed afterwards.
             match Command::new("wl-copy").arg(text).status() {
                 Ok(status) if status.success() => {
                     println!("📋 Copied to clipboard (wl-copy)");
@@ -32,7 +41,6 @@ pub fn copy_and_paste(text: &str, auto_paste: bool, auto_inject: bool) -> Result
                 }
             }
         } else {
-            // Use arboard for X11
             let mut clipboard = Clipboard::new()?;
             clipboard.set_text(text)?;
             println!("📋 Copied to clipboard");
@@ -46,33 +54,35 @@ pub fn copy_and_paste(text: &str, auto_paste: bool, auto_inject: bool) -> Result
         println!("📋 Copied to clipboard");
     }
 
-    // CRITICAL: Wait for clipboard to fully sync before attempting paste
-    use std::thread;
-    use std::time::Duration;
-    thread::sleep(Duration::from_millis(200));
-
-    // Auto-paste using system tools
+    // ── Paste ────────────────────────────────────────────────────────────────
     #[cfg(target_os = "linux")]
     {
         if auto_paste {
             if auto_inject {
-                // Try evdev text injection (requires CAP_DAC_OVERRIDE)
+                // Direct character typing via evdev+XKB (requires CAP_DAC_OVERRIDE)
                 match inject_linux::inject_text(text) {
-                    Ok(_) => {
-                        println!("⌨️  Typed text (evdev+XKB)");
-                    }
+                    Ok(_) => println!("⌨️  Typed text (evdev+XKB)"),
                     Err(e) => {
                         warn!("Failed to auto-type via evdev: {}", e);
                         println!("⚠️  Auto-type failed - Press Ctrl+V to paste");
-                        println!("   To enable: sudo setcap \"cap_dac_override+p\" $(which clevernote-daemon)");
+                        println!(
+                            "   To enable: sudo setcap \"cap_dac_override+p\" $(which clevernote-daemon)"
+                        );
+                    }
+                }
+            } else if let Some(dev) = paste_device {
+                // Fast path: persistent device, no registration delay
+                match dev.paste() {
+                    Ok(_) => println!("⌨️  Auto-pasted"),
+                    Err(e) => {
+                        warn!("Failed to auto-paste (persistent device): {}", e);
+                        println!("💡 Press Ctrl+V to paste (or Ctrl+Shift+V in terminals)");
                     }
                 }
             } else {
-                // Try to simulate paste with evdev (detects terminal vs regular app)
+                // Fallback: one-shot device creation (pays the 300 ms delay)
                 match inject_linux::inject_paste() {
-                    Ok(_) => {
-                        println!("⌨️  Auto-pasted");
-                    }
+                    Ok(_) => println!("⌨️  Auto-pasted"),
                     Err(e) => {
                         warn!("Failed to auto-paste: {}", e);
                         println!("💡 Press Ctrl+V to paste (or Ctrl+Shift+V in terminals)");

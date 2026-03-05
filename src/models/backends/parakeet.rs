@@ -10,9 +10,11 @@ pub struct ParakeetBackend {
 }
 
 impl ParakeetBackend {
-    pub fn new<P: AsRef<Path>>(model_path: P) -> Result<Self> {
+    pub fn new<P: AsRef<Path>>(model_path: P, intra_threads: usize) -> Result<Self> {
         let path = model_path.as_ref();
-        let model = ParakeetTDT::from_pretrained(path, None)?;
+        use parakeet_rs::ExecutionConfig;
+        let config = ExecutionConfig::default().with_intra_threads(intra_threads);
+        let model = ParakeetTDT::from_pretrained(path, Some(config))?;
 
         // Extract model name from path
         let model_name = path

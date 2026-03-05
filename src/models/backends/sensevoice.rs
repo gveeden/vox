@@ -19,7 +19,7 @@ pub struct SenseVoiceBackend {
 }
 
 impl SenseVoiceBackend {
-    pub fn new<P: AsRef<Path>>(model_path: P) -> Result<Self> {
+    pub fn new<P: AsRef<Path>>(model_path: P, intra_threads: usize) -> Result<Self> {
         let path = model_path.as_ref();
 
         // Check for required files
@@ -35,6 +35,7 @@ impl SenseVoiceBackend {
 
         // Load ONNX model
         let model = Session::builder()?
+            .with_intra_threads(intra_threads)?
             .commit_from_file(&model_file)
             .map_err(|e| anyhow!("Failed to load SenseVoice model: {}", e))?;
 

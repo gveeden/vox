@@ -20,7 +20,15 @@ enum Commands {
     /// Toggle recording on/off
     Toggle,
     /// Start recording (push-to-talk mode)
-    Start,
+    Start {
+        /// Run LLM post-processing on this recording, overriding config
+        #[arg(long)]
+        llm: bool,
+        /// Custom LLM prompt for this recording (implies --llm).
+        /// Use {text} as placeholder for the transcript.
+        #[arg(long, value_name = "PROMPT")]
+        prompt: Option<String>,
+    },
     /// Stop recording (push-to-talk mode)
     Stop,
     /// Get daemon status
@@ -71,7 +79,14 @@ fn main() {
 
     match cli.command {
         Commands::Toggle => handle_command(Command::Toggle),
-        Commands::Start => handle_command(Command::Start),
+        Commands::Start { llm, prompt } => handle_command(Command::Start {
+            use_llm: if llm || prompt.is_some() {
+                Some(true)
+            } else {
+                None
+            },
+            prompt_override: prompt,
+        }),
         Commands::Stop => handle_command(Command::Stop),
         Commands::Status => handle_command(Command::Status),
         Commands::Quit => handle_command(Command::Quit),

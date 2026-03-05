@@ -4,6 +4,12 @@
 # Default: Alt
 modifier_key = "Ctrl"
 
+# Number of CPU threads ORT uses per session (intra-op parallelism).
+# Set to the number of performance cores on your CPU.
+# Apple Silicon M1/M2/M3: 4 P-cores. M3 Pro/Max: 6-12 P-cores.
+# Default: 4
+# intra_threads = 4
+
 # Trigger key: Space, Enter, Tab, Escape
 # Default: Space
 # The hotkey is captured and WILL NOT reach other applications!
