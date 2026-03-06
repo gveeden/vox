@@ -39,7 +39,7 @@ pub struct ModelRegistry {
 
 impl ModelRegistry {
     /// Load the model registry from the embedded models.json
-    /// Merges with user config at ~/.config/clevernote/models.json if present
+    /// Merges with user config at ~/.config/vox/models.json if present
     pub fn load() -> Result<Self> {
         // Always load embedded defaults first
         let embedded_json = include_str!("../../models.json");

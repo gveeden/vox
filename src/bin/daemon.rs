@@ -1,7 +1,7 @@
-/// CleverNote daemon - handles recording, transcription, and IPC
+/// Vox daemon - handles recording, transcription, and IPC
 use chrono::Local;
 use clap::Parser;
-use clevernote::{
+use vox::{
     audio::AudioCapture,
     clipboard, convert_to_mono, get_config_dir,
     ipc::{self, Command, DaemonStatus, Response, SuccessResponse},
@@ -22,7 +22,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 #[derive(Parser, Debug)]
-#[command(author, version, about = "CleverNote daemon", long_about = None)]
+#[command(author, version, about = "Vox daemon", long_about = None)]
 struct Args {
     /// Input device name to use for recording (runtime-only override)
     #[arg(long)]
@@ -68,7 +68,7 @@ struct DaemonConfig {
     #[serde(default = "default_input_device")]
     input_device: Option<String>,
     /// Process every transcription through the LLM by default.
-    /// The --llm flag on `clevernote start` overrides this per-recording.
+    /// The --llm flag on `vox start` overrides this per-recording.
     /// The LLM model is loaded only if llm_model or llm_api_* is configured.
     /// This flag controls default behaviour (run on every recording vs. on-demand).
     #[serde(default = "default_process_transcription", alias = "process_with_llm")]
@@ -173,18 +173,18 @@ impl DaemonConfig {
     }
 }
 
-const DEFAULT_CONFIG_TEMPLATE: &str = r#"# CleverNote configuration
+const DEFAULT_CONFIG_TEMPLATE: &str = r#"# Vox configuration
 # All options shown — uncomment and edit the ones you want to change.
 
 # Transcription model to use.
-# Run `clevernote model list` to see available models.
+# Run `vox model list` to see available models.
 active_model = "parakeet-tdt-0.6b-v3-int8"
 
 # Automatically paste the transcription result after recording stops.
 auto_paste = true
 
 # Use direct key injection instead of Ctrl+V (types each character individually).
-# Requires: sudo setcap "cap_dac_override+p" $(which clevernote-daemon)
+# Requires: sudo setcap "cap_dac_override+p" $(which vox-daemon)
 # auto_inject = false
 
 # Number of CPU threads for inference.
@@ -199,7 +199,7 @@ auto_paste = true
 # The local model takes priority when both are configured.
 #
 # Usage:
-#   clevernote start --llm            run LLM for this recording only
+#   vox start --llm            run LLM for this recording only
 #   process_transcription = true      run LLM on every recording automatically
 
 # Process every transcription through the LLM by default (without --llm flag).
@@ -209,7 +209,7 @@ auto_paste = true
 # process_prompt = "Clean up the following voice transcription: remove filler words (um, uh, like, you know), fix grammar and punctuation, and return only the cleaned text with no additional commentary: {text}"
 
 # ── Option A: Local ONNX model (private, offline) ──────────────────────────
-# Download with: clevernote model pull qwen3.5-0.8b-fp16
+# Download with: vox model pull qwen3.5-0.8b-fp16
 # llm_model = "qwen3.5-0.8b-fp16"
 
 # ── Option B: Cloud API ────────────────────────────────────────────────────
@@ -312,14 +312,14 @@ struct DaemonState {
     pending_prompt_override: std::sync::Mutex<Option<String>>,
     /// Whether an LLM worker is running.
     llm_configured: bool,
-    /// Human-readable LLM backend description for `clevernote status`.
+    /// Human-readable LLM backend description for `vox status`.
     llm_backend: Option<String>,
     /// Whether LLM post-processing runs on every recording by default.
     process_transcription: bool,
     /// Persistent uinput paste device (Linux only). Created once at startup so
     /// the Wayland registration cost is paid then, not at each paste.
     #[cfg(target_os = "linux")]
-    paste_device: std::sync::Mutex<Option<clevernote::inject_linux::PasteDevice>>,
+    paste_device: std::sync::Mutex<Option<vox::inject_linux::PasteDevice>>,
 }
 
 impl DaemonState {
@@ -377,8 +377,8 @@ fn main() -> Result<()> {
     };
     env_logger::Builder::from_default_env()
         .filter_level(log::LevelFilter::Warn) // silence noisy deps by default
-        .filter_module("clevernote", log_level)
-        .filter_module("clevernote_daemon", log_level)
+        .filter_module("vox", log_level)
+        .filter_module("vox_daemon", log_level)
         .filter_module(
             "ort",
             if args.verbose {
@@ -389,7 +389,7 @@ fn main() -> Result<()> {
         )
         .init();
 
-    info!("CleverNote daemon starting...");
+    info!("Vox daemon starting...");
 
     // Create config directory
     let config_dir = get_config_dir();
@@ -421,12 +421,12 @@ fn main() -> Result<()> {
     };
 
     // Get models directory
-    let models_dir = clevernote::get_models_dir();
+    let models_dir = vox::get_models_dir();
     fs::create_dir_all(&models_dir)?;
 
     // Copy default model registry to config dir if it doesn't exist
     // This allows users to edit models.json at runtime
-    match clevernote::models::ModelRegistry::copy_default_to_config() {
+    match vox::models::ModelRegistry::copy_default_to_config() {
         Ok(path) => info!("Model registry available at: {:?}", path),
         Err(e) => warn!("Failed to copy model registry: {}", e),
     }
@@ -434,7 +434,7 @@ fn main() -> Result<()> {
     // Ensure active model is downloaded
     info!("Checking for model '{}'...", config.active_model);
     let model_path =
-        match clevernote::models::ensure_model_downloaded(&config.active_model, &models_dir, false)
+        match vox::models::ensure_model_downloaded(&config.active_model, &models_dir, false)
         {
             Ok(path) => path,
             Err(e) => {
@@ -463,9 +463,9 @@ fn main() -> Result<()> {
     // If creation fails (e.g. capability not granted) we fall back to the
     // one-shot path for each paste.
     #[cfg(target_os = "linux")]
-    let initial_paste_device: Option<clevernote::inject_linux::PasteDevice> = {
+    let initial_paste_device: Option<vox::inject_linux::PasteDevice> = {
         if config.auto_paste && !config.auto_inject {
-            match clevernote::inject_linux::PasteDevice::new() {
+            match vox::inject_linux::PasteDevice::new() {
                 Ok(dev) => {
                     info!("Persistent paste device ready");
                     Some(dev)
@@ -490,7 +490,7 @@ fn main() -> Result<()> {
     let (llm_tx, llm_backend_desc): (Option<std::sync::mpsc::Sender<LlmRequest>>, Option<String>) = {
         if let Some(ref llm_model_id) = config.llm_model {
             // Local ONNX model path
-            match clevernote::models::ensure_model_downloaded(llm_model_id, &models_dir, false) {
+            match vox::models::ensure_model_downloaded(llm_model_id, &models_dir, false) {
                 Ok(llm_path) => {
                     info!(
                         "Loading LLM model ({}) from: {} (RSS before: {:.0} MB)",
@@ -499,7 +499,7 @@ fn main() -> Result<()> {
                         rss_mb()
                     );
                     let (ltx, lrx) = std::sync::mpsc::channel::<LlmRequest>();
-                    let llm_registry = clevernote::models::ModelRegistry::load();
+                    let llm_registry = vox::models::ModelRegistry::load();
                     let llm_backend_type = llm_registry
                         .ok()
                         .and_then(|r| r.get_model(llm_model_id).map(|m| m.backend.clone()))
@@ -517,7 +517,7 @@ fn main() -> Result<()> {
                 }
                 Err(e) => {
                     warn!(
-                        "LLM model '{}' not downloaded — run `clevernote model pull {}` to enable local LLM ({})",
+                        "LLM model '{}' not downloaded — run `vox model pull {}` to enable local LLM ({})",
                         llm_model_id, llm_model_id, e
                     );
                     (None, None)
@@ -628,8 +628,8 @@ fn main() -> Result<()> {
     info!("Starting IPC server at: {}", socket_path.display());
     let listener = UnixListener::bind(&socket_path)?;
 
-    info!("✅ CleverNote daemon ready!");
-    info!("Connect with: clevernote toggle");
+    info!("✅ Vox daemon ready!");
+    info!("Connect with: vox toggle");
 
     for stream in listener.incoming() {
         match stream {
@@ -754,7 +754,7 @@ fn handle_start(
     *daemon_state.pending_prompt_override.lock().unwrap() = prompt_override;
 
     // Show overlay window and store close handle
-    let close_handle = clevernote::recording_overlay::show_recording_overlay();
+    let close_handle = vox::recording_overlay::show_recording_overlay();
     *daemon_state.overlay_close_handle.lock().unwrap() = Some(close_handle);
 
     Response::Success(SuccessResponse::RecordingStarted)
@@ -787,7 +787,7 @@ fn handle_stop(
     // Hide overlay window
     info!("handle_stop: About to hide overlay");
     if let Some(close_handle) = daemon_state.overlay_close_handle.lock().unwrap().take() {
-        clevernote::recording_overlay::hide_recording_overlay(close_handle);
+        vox::recording_overlay::hide_recording_overlay(close_handle);
     }
     info!("handle_stop: Overlay hidden, continuing...");
 
@@ -848,14 +848,14 @@ fn handle_toggle(
 }
 
 fn handle_list_models(daemon_state: &Arc<DaemonState>) -> Response {
-    use clevernote::models::ModelRegistry;
+    use vox::models::ModelRegistry;
 
     let registry = match ModelRegistry::load() {
         Ok(r) => r,
         Err(e) => return Response::Error(format!("Failed to load model registry: {}", e)),
     };
 
-    let models_dir = clevernote::get_models_dir();
+    let models_dir = vox::get_models_dir();
     let active_model = daemon_state.active_model.lock().unwrap().clone();
 
     let model_infos: Vec<ipc::ModelInfo> = registry
@@ -878,7 +878,7 @@ fn handle_list_models(daemon_state: &Arc<DaemonState>) -> Response {
 }
 
 fn handle_model_info(model_id: &str, daemon_state: &Arc<DaemonState>) -> Response {
-    use clevernote::models::ModelRegistry;
+    use vox::models::ModelRegistry;
 
     let registry = match ModelRegistry::load() {
         Ok(r) => r,
@@ -890,7 +890,7 @@ fn handle_model_info(model_id: &str, daemon_state: &Arc<DaemonState>) -> Respons
         None => return Response::Error(format!("Model '{}' not found", model_id)),
     };
 
-    let models_dir = clevernote::get_models_dir();
+    let models_dir = vox::get_models_dir();
     let active_model = daemon_state.active_model.lock().unwrap().clone();
 
     let info = ipc::ModelInfo {
@@ -907,7 +907,7 @@ fn handle_model_info(model_id: &str, daemon_state: &Arc<DaemonState>) -> Respons
 }
 
 fn handle_set_model(model_id: &str, daemon_state: &Arc<DaemonState>) -> Response {
-    use clevernote::models::ModelRegistry;
+    use vox::models::ModelRegistry;
 
     let registry = match ModelRegistry::load() {
         Ok(r) => r,
@@ -920,10 +920,10 @@ fn handle_set_model(model_id: &str, daemon_state: &Arc<DaemonState>) -> Response
     }
 
     // Check if model is downloaded
-    let models_dir = clevernote::get_models_dir();
+    let models_dir = vox::get_models_dir();
     if !registry.is_model_downloaded(model_id, &models_dir) {
         return Response::Error(format!(
-            "Model '{}' is not downloaded. Run 'clevernote model pull {}' first.",
+            "Model '{}' is not downloaded. Run 'vox model pull {}' first.",
             model_id, model_id
         ));
     }
@@ -959,25 +959,25 @@ trait LlmProcessor: Send {
     fn process(&mut self, text: &str, prompt_template: &str) -> anyhow::Result<String>;
 }
 
-impl LlmProcessor for clevernote::models::backends::llm::LlmBackend {
+impl LlmProcessor for vox::models::backends::llm::LlmBackend {
     fn process(&mut self, text: &str, prompt_template: &str) -> anyhow::Result<String> {
         self.process(text, prompt_template)
     }
 }
 
-impl LlmProcessor for clevernote::models::backends::gemma::GemmaBackend {
+impl LlmProcessor for vox::models::backends::gemma::GemmaBackend {
     fn process(&mut self, text: &str, prompt_template: &str) -> anyhow::Result<String> {
         self.process(text, prompt_template)
     }
 }
 
-impl LlmProcessor for clevernote::models::backends::qwen3::Qwen3Backend {
+impl LlmProcessor for vox::models::backends::qwen3::Qwen3Backend {
     fn process(&mut self, text: &str, prompt_template: &str) -> anyhow::Result<String> {
         self.process(text, prompt_template)
     }
 }
 
-impl LlmProcessor for clevernote::models::backends::gemma3::Gemma3Backend {
+impl LlmProcessor for vox::models::backends::gemma3::Gemma3Backend {
     fn process(&mut self, text: &str, prompt_template: &str) -> anyhow::Result<String> {
         self.process(text, prompt_template)
     }
@@ -998,7 +998,7 @@ fn llm_worker(
 
     let mut backend: Box<dyn LlmProcessor> = match backend_type {
         "gemma" => {
-            use clevernote::models::backends::gemma::GemmaBackend;
+            use vox::models::backends::gemma::GemmaBackend;
             match GemmaBackend::new(&model_path, intra_threads) {
                 Ok(b) => Box::new(b),
                 Err(e) => {
@@ -1008,7 +1008,7 @@ fn llm_worker(
             }
         }
         "qwen3" => {
-            use clevernote::models::backends::qwen3::Qwen3Backend;
+            use vox::models::backends::qwen3::Qwen3Backend;
             match Qwen3Backend::new(&model_path, intra_threads) {
                 Ok(b) => Box::new(b),
                 Err(e) => {
@@ -1018,7 +1018,7 @@ fn llm_worker(
             }
         }
         "gemma3" => {
-            use clevernote::models::backends::gemma3::Gemma3Backend;
+            use vox::models::backends::gemma3::Gemma3Backend;
             match Gemma3Backend::new(&model_path, intra_threads) {
                 Ok(b) => Box::new(b),
                 Err(e) => {
@@ -1029,7 +1029,7 @@ fn llm_worker(
         }
         _ => {
             // Default: Qwen3.5 hybrid LlmBackend
-            use clevernote::models::backends::llm::LlmBackend;
+            use vox::models::backends::llm::LlmBackend;
             match LlmBackend::new(&model_path, intra_threads) {
                 Ok(b) => Box::new(b),
                 Err(e) => {
@@ -1166,7 +1166,7 @@ fn llm_api_worker(
                 {
                     error!(
                         "Hint: API key may be invalid or expired. \
-                         Check llm_api_key in ~/.config/clevernote/config.toml"
+                         Check llm_api_key in ~/.config/vox/config.toml"
                     );
                 }
             }
@@ -1188,16 +1188,16 @@ fn transcription_worker(
     process_transcription: bool,
     intra_threads: usize,
 ) -> Result<()> {
-    use clevernote::models::backends::create_backend;
+    use vox::models::backends::create_backend;
 
     // Load registry to get backend type from model definition
-    let registry = clevernote::models::ModelRegistry::load()
+    let registry = vox::models::ModelRegistry::load()
         .map_err(|e| eyre::eyre!("Failed to load model registry: {}", e))?;
     let backend_type = if let Some(model) = registry.get_model(&model_id) {
         model.backend.clone()
     } else {
         // Fallback to auto-detection if model not in registry
-        use clevernote::models::backends::factory::detect_backend_type;
+        use vox::models::backends::factory::detect_backend_type;
         match detect_backend_type(&model_path) {
             Ok(t) => t,
             Err(e) => {
@@ -1251,7 +1251,7 @@ fn transcription_worker(
 }
 
 fn process_transcription_with_backend(
-    backend: &mut dyn clevernote::models::backends::TranscriptionBackend,
+    backend: &mut dyn vox::models::backends::TranscriptionBackend,
     job: TranscriptionJob,
     daemon_state: &Arc<DaemonState>,
     llm_tx: Option<&std::sync::mpsc::Sender<LlmRequest>>,
@@ -1312,7 +1312,7 @@ fn process_transcription_with_backend(
         if let Some(ltx) = llm_tx {
             info!("🧠 Running LLM post-processing...");
             // Show spinning-circle indicator while LLM runs.
-            clevernote::recording_overlay::show_llm_processing();
+            vox::recording_overlay::show_llm_processing();
             let llm_start = Instant::now();
 
             let (reply_tx, reply_rx) = std::sync::mpsc::sync_channel::<Result<String, String>>(1);
@@ -1359,17 +1359,17 @@ fn process_transcription_with_backend(
                 }
             };
             // LLM finished (success or fallback) — show green checkmark.
-            clevernote::recording_overlay::show_all_done();
+            vox::recording_overlay::show_all_done();
             result_text
         } else {
             warn!("--llm requested but LLM worker is not running (is llm_model configured and downloaded?)");
             // No LLM worker available — skip spinner, go straight to done.
-            clevernote::recording_overlay::show_all_done();
+            vox::recording_overlay::show_all_done();
             text.clone()
         }
     } else {
         // No LLM post-processing — transcription complete is the final step.
-        clevernote::recording_overlay::show_all_done();
+        vox::recording_overlay::show_all_done();
         text.clone()
     };
 

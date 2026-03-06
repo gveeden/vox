@@ -50,7 +50,7 @@ struct Args {
     #[arg(short, long, default_value_t = true)]
     tdt: bool,
 
-    /// Output directory for transcripts (relative to ~/.config/clevernote/)
+    /// Output directory for transcripts (relative to ~/.config/vox/)
     #[arg(short, long, default_value = "transcripts")]
     output_dir: String,
 
@@ -185,7 +185,7 @@ fn check_accessibility_permissions() {
         .to_string();
 
     // Print helpful information at startup
-    eprintln!("\n📝 Starting CleverNote...");
+    eprintln!("\n📝 Starting Vox...");
     eprintln!("   Binary: {}", exe_path);
     eprintln!();
 }
@@ -194,10 +194,10 @@ fn check_accessibility_permissions() {
 fn check_and_offer_installation() -> Result<()> {
     let home_dir = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     let plist_path = format!(
-        "{}/Library/LaunchAgents/com.clevernote.parakeet.plist",
+        "{}/Library/LaunchAgents/com.vox.parakeet.plist",
         home_dir
     );
-    let config_dir = clevernote::get_config_dir();
+    let config_dir = vox::get_config_dir();
     let first_run_marker = config_dir.join("first_run_complete");
 
     // Check if we've already prompted the user (or if LaunchAgent is installed)
@@ -206,14 +206,14 @@ fn check_and_offer_installation() -> Result<()> {
     }
 
     // Show a native macOS dialog for first run
-    let message = "CleverNote can run automatically on startup as a background service.\n\n\
+    let message = "Vox can run automatically on startup as a background service.\n\n\
                    Benefits:\n\
                    • Always available - no need to start manually\n\
                    • Runs in the background - no dock icon\n\
                    • Starts on login automatically\n\n\
-                   Would you like to install CleverNote as a background service?";
+                   Would you like to install Vox as a background service?";
 
-    let result = show_dialog("Welcome to CleverNote!", message, &["Install", "Skip"]);
+    let result = show_dialog("Welcome to Vox!", message, &["Install", "Skip"]);
 
     if result != 0 {
         // User clicked "Skip"
@@ -264,11 +264,11 @@ fn check_and_offer_installation() -> Result<()> {
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.clevernote.parakeet</string>
+    <string>com.vox.parakeet</string>
     
     <key>ProgramArguments</key>
 <array>
-    <string>CleverNote.app/Contents/MacOS/CleverNote</string>
+    <string>Vox.app/Contents/MacOS/Vox</string>
 </array>
     
     <key>RunAtLoad</key>
@@ -281,10 +281,10 @@ fn check_and_offer_installation() -> Result<()> {
 </dict>
     
     <key>StandardOutPath</key>
-    <string>/tmp/clevernote.log</string>
+    <string>/tmp/vox.log</string>
     
     <key>StandardErrorPath</key>
-    <string>/tmp/clevernote.err.log</string>
+    <string>/tmp/vox.err.log</string>
     
     <key>EnvironmentVariables</key>
     <dict>
@@ -303,7 +303,7 @@ fn check_and_offer_installation() -> Result<()> {
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.clevernote.parakeet</string>
+    <string>com.vox.parakeet</string>
     
     <key>ProgramArguments</key>
     <array>
@@ -320,10 +320,10 @@ fn check_and_offer_installation() -> Result<()> {
     <true/>
     
     <key>StandardOutPath</key>
-    <string>/tmp/clevernote.log</string>
+    <string>/tmp/vox.log</string>
     
     <key>StandardErrorPath</key>
-    <string>/tmp/clevernote.err.log</string>
+    <string>/tmp/vox.err.log</string>
     
     <key>EnvironmentVariables</key>
     <dict>
@@ -351,12 +351,12 @@ fn check_and_offer_installation() -> Result<()> {
     if !is_signed {
         // Binary is not signed - show error and instructions
         let sign_msg = format!(
-            "CleverNote needs to be code-signed to work with macOS Accessibility.\n\n\
+            "Vox needs to be code-signed to work with macOS Accessibility.\n\n\
              Please run these commands in Terminal:\n\n\
              cd {}\n\
              cargo build --release\n\
              codesign --force --deep --sign - ./target/release/parakeet\n\n\
-             Then run CleverNote again to complete installation.",
+             Then run Vox again to complete installation.",
             working_dir_str
         );
 
@@ -398,13 +398,13 @@ fn check_and_offer_installation() -> Result<()> {
     };
 
     let permission_file = if is_app_bundle {
-        "CleverNote.app"
+        "Vox.app"
     } else {
         "parakeet"
     };
 
     let permission_msg = format!(
-        "Installation complete! CleverNote is now running as a background service.\n\n\
+        "Installation complete! Vox is now running as a background service.\n\n\
          IMPORTANT: Grant Accessibility permissions:\n\n\
          1. System Settings → Privacy & Security → Accessibility\n\
          2. Click the lock to unlock\n\
@@ -412,7 +412,7 @@ fn check_and_offer_installation() -> Result<()> {
          4. Press Cmd+Shift+G and paste:\n   {}\n\
          5. Select '{}' and click Open\n\
          6. Enable the checkbox\n\n\
-         After granting permissions, CleverNote will be ready to use!",
+         After granting permissions, Vox will be ready to use!",
         permission_path, permission_file
     );
 
@@ -469,7 +469,7 @@ fn show_dialog(title: &str, message: &str, buttons: &[&str]) -> i32 {
     }
 }
 
-// Use the shared get_config_dir from lib.rs (now ~/.config/clevernote)
+// Use the shared get_config_dir from lib.rs (now ~/.config/vox)
 
 #[cfg(target_os = "macos")]
 fn check_and_offer_move_to_applications() -> Result<()> {
@@ -494,7 +494,7 @@ fn check_and_offer_move_to_applications() -> Result<()> {
     }
 
     // Check if we've already asked
-    let config_dir = clevernote::get_config_dir();
+    let config_dir = vox::get_config_dir();
     let asked_marker = config_dir.join(".asked_move_to_applications");
     if asked_marker.exists() {
         return Ok(());
@@ -502,7 +502,7 @@ fn check_and_offer_move_to_applications() -> Result<()> {
 
     // Ask user if they want to move to Applications
     let message = format!(
-        "For the best experience, CleverNote should be installed in your Applications folder.\n\n\
+        "For the best experience, Vox should be installed in your Applications folder.\n\n\
          Current location: {}\n\n\
          Would you like to move it to /Applications now?",
         app_bundle_path.display()
@@ -521,9 +521,9 @@ fn check_and_offer_move_to_applications() -> Result<()> {
         // User wants to move - show instructions since we can't move ourselves
         let instructions = format!(
             "Please follow these steps:\n\n\
-             1. Quit CleverNote (click menu bar icon → Quit)\n\
-             2. Drag CleverNote.app to your Applications folder\n\
-             3. Launch CleverNote from Applications\n\n\
+             1. Quit Vox (click menu bar icon → Quit)\n\
+             2. Drag Vox.app to your Applications folder\n\
+             3. Launch Vox from Applications\n\n\
              The app will then update its settings automatically.",
         );
 
@@ -538,10 +538,10 @@ fn check_and_offer_move_to_applications() -> Result<()> {
 
 fn main() -> Result<()> {
     // Ensure config directory exists
-    let config_dir = clevernote::get_config_dir();
+    let config_dir = vox::get_config_dir();
     fs::create_dir_all(&config_dir)?;
 
-    // Set working directory to ~/.config/clevernote/
+    // Set working directory to ~/.config/vox/
     // This is where models, config, and transcripts will be stored
     std::env::set_current_dir(&config_dir)?;
     eprintln!("📂 Working directory: {}", config_dir.display());
@@ -685,7 +685,7 @@ fn main() -> Result<()> {
     let icon = load_icon();
     let _tray_icon = TrayIconBuilder::new()
         .with_menu(Box::new(tray_menu))
-        .with_tooltip("CleverNote - Voice Transcription")
+        .with_tooltip("Vox - Voice Transcription")
         .with_icon(icon)
         .build()
         .unwrap();

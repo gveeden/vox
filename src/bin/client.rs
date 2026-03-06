@@ -1,14 +1,14 @@
-/// CleverNote client - sends commands to the daemon
+/// Vox client - sends commands to the daemon
 use clap::{Parser, Subcommand};
-use clevernote::ipc::{self, Command, Response, SuccessResponse};
-use clevernote::models::{ensure_model_downloaded, remove_model, ModelRegistry};
+use vox::ipc::{self, Command, Response, SuccessResponse};
+use vox::models::{ensure_model_downloaded, remove_model, ModelRegistry};
 use cpal::traits::{DeviceTrait, HostTrait};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
 #[derive(Parser)]
-#[command(author, version, about = "CleverNote voice transcription client", long_about = None)]
+#[command(author, version, about = "Vox voice transcription client", long_about = None)]
 #[command(arg_required_else_help = true)]
 struct Cli {
     #[command(subcommand)]
@@ -156,7 +156,7 @@ fn handle_command(command: Command) {
 }
 
 fn handle_model_command(cmd: ModelCommands) {
-    let models_dir = clevernote::get_models_dir();
+    let models_dir = vox::get_models_dir();
 
     match cmd {
         ModelCommands::List => {
@@ -201,7 +201,7 @@ fn handle_model_command(cmd: ModelCommands) {
 fn list_models() -> Result<(), String> {
     let registry =
         ModelRegistry::load().map_err(|e| format!("Failed to load model registry: {}", e))?;
-    let models_dir = clevernote::get_models_dir();
+    let models_dir = vox::get_models_dir();
 
     println!("Available models:");
     println!();
@@ -255,7 +255,7 @@ fn pull_model(model_id: &str, models_dir: &std::path::PathBuf) -> Result<(), Str
 }
 
 fn set_model_direct(model_id: &str) -> Result<(), String> {
-    use clevernote::models::ModelRegistry;
+    use vox::models::ModelRegistry;
     use std::fs;
 
     // Verify model exists in registry
@@ -267,16 +267,16 @@ fn set_model_direct(model_id: &str) -> Result<(), String> {
     }
 
     // Check if model is downloaded
-    let models_dir = clevernote::get_models_dir();
+    let models_dir = vox::get_models_dir();
     if !registry.is_model_downloaded(model_id, &models_dir) {
         return Err(format!(
-            "Model '{}' is not downloaded. Run 'clevernote model pull {}' first.",
+            "Model '{}' is not downloaded. Run 'vox model pull {}' first.",
             model_id, model_id
         ));
     }
 
     // Load config
-    let config_dir = clevernote::get_config_dir();
+    let config_dir = vox::get_config_dir();
     let config_path = config_dir.join("config.toml");
 
     let config_contents = if config_path.exists() {
@@ -322,7 +322,7 @@ fn send_command(command: Command) -> Result<(), String> {
     if !socket_path.exists() {
         return Err(format!(
             "Daemon not running. Socket not found at: {}\n\
-             Start the daemon with: clevernote-daemon",
+             Start the daemon with: vox-daemon",
             socket_path.display()
         ));
     }
@@ -375,7 +375,7 @@ fn send_command(command: Command) -> Result<(), String> {
                     println!("⚠️  Not recording");
                 }
                 SuccessResponse::Status(status) => {
-                    println!("CleverNote Daemon Status:");
+                    println!("Vox Daemon Status:");
                     println!(
                         "  Recording: {}",
                         if status.is_recording { "Yes" } else { "No" }
@@ -433,7 +433,7 @@ fn send_command(command: Command) -> Result<(), String> {
                 SuccessResponse::ModelSet { model_id } => {
                     println!("✓ Active model set to '{}'", model_id);
                     println!("  Daemon is restarting...");
-                    println!("  Wait a moment, then check status with: clevernote status");
+                    println!("  Wait a moment, then check status with: vox status");
                 }
             }
             Ok(())

@@ -80,7 +80,7 @@ pub fn ensure_model_exists(model_path: &str, is_tdt: bool) -> Result<PathBuf> {
         #[cfg(target_os = "macos")]
         {
             let message = format!(
-                "CleverNote needs to download the speech recognition model.\n\n\
+                "Vox needs to download the speech recognition model.\n\n\
                  Model: parakeet-tdt-0.6b-v3 (~3GB)\n\
                  Location: {}\n\n\
                  This will take a few minutes depending on your connection.\n\n\
@@ -96,7 +96,7 @@ pub fn ensure_model_exists(model_path: &str, is_tdt: bool) -> Result<PathBuf> {
                 let success_msg = format!(
                     "Model downloaded successfully!\n\n\
                      Location: {}\n\n\
-                     CleverNote is ready to use!",
+                     Vox is ready to use!",
                     model_path
                 );
                 show_info_dialog("Download Complete", &success_msg);
@@ -157,7 +157,7 @@ fn download_tdt_model(dest_dir: &Path) -> Result<()> {
 
     // Create GUI progress window on macOS
     #[cfg(target_os = "macos")]
-    let progress_window = ProgressWindow::new("Downloading CleverNote Models", TDT_FILES.len())?;
+    let progress_window = ProgressWindow::new("Downloading Vox Models", TDT_FILES.len())?;
 
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(300))
@@ -304,7 +304,7 @@ fn download_tdt_model(dest_dir: &Path) -> Result<()> {
 }
 
 pub fn get_default_model_path() -> PathBuf {
-    // Use ~/.config/clevernote/models/parakeet-tdt
+    // Use ~/.config/vox/models/parakeet-tdt
     // Inline the config dir logic to avoid import issues
     let config_home = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
@@ -314,7 +314,7 @@ pub fn get_default_model_path() -> PathBuf {
             .to_string()
     });
     PathBuf::from(config_home)
-        .join("clevernote")
+        .join("vox")
         .join("models")
         .join("parakeet-tdt")
 }

@@ -1,4 +1,4 @@
-//! LLM post-processing backend for CleverNote.
+//! LLM post-processing backend for Vox.
 //!
 //! Supports the Qwen3.5 ONNX family (0.8B, 2B, 4B, …).  Architecture
 //! constants (layer count, cache tensor shapes, which layers use standard

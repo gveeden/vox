@@ -10,7 +10,7 @@ pub mod recording_overlay;
 
 use std::path::PathBuf;
 
-/// Get the CleverNote config directory (~/.config/clevernote/)
+/// Get the Vox config directory (~/.config/vox/)
 pub fn get_config_dir() -> PathBuf {
     // Use XDG_CONFIG_HOME if set, otherwise default to ~/.config
     let config_home = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| {
@@ -20,10 +20,10 @@ pub fn get_config_dir() -> PathBuf {
             .to_string_lossy()
             .to_string()
     });
-    PathBuf::from(config_home).join("clevernote")
+    PathBuf::from(config_home).join("vox")
 }
 
-/// Get the models directory (~/.config/clevernote/models/)
+/// Get the models directory (~/.config/vox/models/)
 pub fn get_models_dir() -> PathBuf {
     get_config_dir().join("models")
 }

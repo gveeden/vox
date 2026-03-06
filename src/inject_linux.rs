@@ -106,7 +106,7 @@ impl PasteDevice {
         caps::raise(None, CapSet::Effective, Capability::CAP_DAC_OVERRIDE).map_err(|e| {
             eyre::eyre!(
                 "Failed to raise CAP_DAC_OVERRIDE: {}\n\
-                 Run: sudo setcap \"cap_dac_override+p\" $(which clevernote-daemon)",
+                 Run: sudo setcap \"cap_dac_override+p\" $(which vox-daemon)",
                 e
             )
         })?;
@@ -117,7 +117,7 @@ impl PasteDevice {
         keys.insert(Key::KEY_V);
 
         let device_result = VirtualDeviceBuilder::new()?
-            .name("CleverNote Paste")
+            .name("Vox Paste")
             .with_keys(&keys)?
             .build();
 
@@ -244,7 +244,7 @@ pub fn inject_text(text: &str) -> Result<()> {
         if let Err(e) = caps::raise(None, CapSet::Effective, Capability::CAP_DAC_OVERRIDE) {
             return Err(eyre::eyre!(
                 "Failed to raise CAP_DAC_OVERRIDE capability: {}\n\
-                 Run: sudo setcap \"cap_dac_override+p\" $(which clevernote-daemon)",
+                 Run: sudo setcap \"cap_dac_override+p\" $(which vox-daemon)",
                 e
             ));
         }
@@ -268,7 +268,7 @@ pub fn inject_text(text: &str) -> Result<()> {
     keys.insert(Key::KEY_RIGHTALT);
 
     let device_result = VirtualDeviceBuilder::new()?
-        .name("CleverNote Virtual Keyboard")
+        .name("Vox Virtual Keyboard")
         .with_keys(&keys)?
         .build();
 
@@ -415,7 +415,7 @@ pub fn inject_paste() -> Result<()> {
         if let Err(e) = caps::raise(None, CapSet::Effective, Capability::CAP_DAC_OVERRIDE) {
             return Err(eyre::eyre!(
                 "Failed to raise CAP_DAC_OVERRIDE capability: {}\n\
-                 Run: sudo setcap \"cap_dac_override+p\" $(which clevernote-daemon)",
+                 Run: sudo setcap \"cap_dac_override+p\" $(which vox-daemon)",
                 e
             ));
         }
@@ -430,7 +430,7 @@ pub fn inject_paste() -> Result<()> {
     }
 
     let device_result = VirtualDeviceBuilder::new()?
-        .name("CleverNote Paste")
+        .name("Vox Paste")
         .with_keys(&keys)?
         .build();
 
@@ -524,7 +524,7 @@ pub fn inject_char(c: char) -> Result<()> {
         }
 
         let mut device = VirtualDeviceBuilder::new()?
-            .name("CleverNote Char")
+            .name("Vox Char")
             .with_keys(&keys)?
             .build()?;
 
@@ -573,7 +573,7 @@ pub fn inject_backspace(count: usize) -> Result<()> {
     keys.insert(Key::KEY_BACKSPACE);
 
     let mut device = VirtualDeviceBuilder::new()?
-        .name("CleverNote Backspace")
+        .name("Vox Backspace")
         .with_keys(&keys)?
         .build()?;
 

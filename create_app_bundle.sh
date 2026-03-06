@@ -2,13 +2,13 @@
 
 set -e
 
-echo "📦 Creating CleverNote Application"
+echo "📦 Creating Vox Application"
 echo "=================================="
 echo
 
 # Detect platform
 OS="$(uname -s)"
-APP_NAME="CleverNote"
+APP_NAME="Vox"
 BINARY_SOURCE="./target/release/parakeet"
 
 # Check for required system dependencies on Linux
@@ -78,11 +78,11 @@ if [ "$OS" = "Darwin" ]; then
     cp "$BINARY_SOURCE" "$MACOS/$APP_NAME"
     chmod +x "$MACOS/$APP_NAME"
 
-    # Don't copy models - they will be downloaded to ~/.clevernote/
-    echo "ℹ️  Models will be downloaded to ~/.clevernote/ on first run"
+    # Don't copy models - they will be downloaded to ~/.vox/
+    echo "ℹ️  Models will be downloaded to ~/.vox/ on first run"
 
-    # Don't copy config.toml - it will be created in ~/.clevernote/
-    echo "ℹ️  Config will be created in ~/.clevernote/ on first run"
+    # Don't copy config.toml - it will be created in ~/.vox/
+    echo "ℹ️  Config will be created in ~/.vox/ on first run"
 
     # Create Info.plist
     echo "📝 Creating Info.plist..."
@@ -94,15 +94,15 @@ if [ "$OS" = "Darwin" ]; then
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleExecutable</key>
-    <string>CleverNote</string>
+    <string>Vox</string>
     <key>CFBundleIdentifier</key>
-    <string>com.clevernote.parakeet</string>
+    <string>com.vox.parakeet</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleName</key>
-    <string>CleverNote</string>
+    <string>Vox</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -116,7 +116,7 @@ if [ "$OS" = "Darwin" ]; then
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
-    <string>CleverNote needs microphone access to transcribe your voice.</string>
+    <string>Vox needs microphone access to transcribe your voice.</string>
 </dict>
 </plist>
 EOF
@@ -158,31 +158,31 @@ EOF
     echo "📍 Location: $(pwd)/$APP_BUNDLE"
     echo
     echo "To use:"
-    echo "  • Double-click CleverNote.app to launch"
+    echo "  • Double-click Vox.app to launch"
     echo "  • Or drag to /Applications folder"
     echo "  • No terminal window will appear!"
     echo
     echo "⚠️  Important:"
     echo "  • The app still needs Accessibility permissions"
-    echo "  • Grant permissions to CleverNote.app (not the binary)"
+    echo "  • Grant permissions to Vox.app (not the binary)"
     echo "  • Path for permissions: $(pwd)/$APP_BUNDLE"
     echo
     echo "To install as LaunchAgent:"
-    echo "  • Run CleverNote.app once"
+    echo "  • Run Vox.app once"
     echo "  • It will offer to install automatically"
     echo
 
 elif [ "$OS" = "Linux" ]; then
     # Linux
     INSTALL_DIR="/usr/local/bin"
-    DESKTOP_FILE="clevernote.desktop"
-    BINARY_NAME="clevernote"
+    DESKTOP_FILE="vox.desktop"
+    BINARY_NAME="vox"
 
     echo "📁 Setting up directories..."
     mkdir -p ~/.local/bin
     mkdir -p ~/.local/applications
     mkdir -p ~/.local/share/icons/hicolor/256x256/apps
-    mkdir -p ~/.config/clevernote
+    mkdir -p ~/.config/vox
 
     echo "📋 Installing binary..."
     cp "$BINARY_SOURCE" ~/.local/bin/$BINARY_NAME
@@ -210,9 +210,9 @@ elif [ "$OS" = "Linux" ]; then
     echo "📝 Creating desktop entry..."
     cat > ~/.local/share/$DESKTOP_FILE << EOF
 [Desktop Entry]
-Name=CleverNote
+Name=Vox
 Comment=Voice-to-text transcription with LLM processing
-Exec=$HOME/.local/bin/clevernote
+Exec=$HOME/.local/bin/vox
 Icon=$ICON_PATH
 Type=Application
 Categories=Office;Utility;
@@ -262,15 +262,15 @@ EOF
 
     echo
     while true; do
-        read -p "⚡ Start CleverNote now? (y/n) " yn
+        read -p "⚡ Start Vox now? (y/n) " yn
         case $yn in
             [Yy]* )
                 ~/.local/bin/$BINARY_NAME &
-                echo "✅ CleverNote started in background"
+                echo "✅ Vox started in background"
                 break
                 ;;
             [Nn]* )
-                echo "ℹ️  CleverNote not started"
+                echo "ℹ️  Vox not started"
                 break
                 ;;
             * ) echo "Please answer yes or no.";;
@@ -286,13 +286,13 @@ EOF
     echo "📍 Desktop: ~/.local/share/applications/$DESKTOP_FILE"
     echo
     echo "To use:"
-    echo "  • Run 'clevernote' from terminal"
+    echo "  • Run 'vox' from terminal"
     echo "  • Find it in applications menu"
     echo "  • Or run: ~/.local/bin/$BINARY_NAME"
     echo
     echo "⚠️  Important:"
     echo "  • Grant Accessibility permissions if prompted"
-    echo "  • Models will download to ~/.clevernote/ on first run"
+    echo "  • Models will download to ~/.vox/ on first run"
     echo
 
 else

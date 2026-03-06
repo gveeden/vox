@@ -1,10 +1,10 @@
 [Unit]
-Description=CleverNote Voice Transcription Daemon
+Description=Vox Voice Transcription Daemon
 After=sound.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/clevernote-daemon
+ExecStart=%h/.local/bin/vox-daemon
 Restart=on-failure
 RestartSec=5s
 

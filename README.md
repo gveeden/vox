@@ -1,4 +1,4 @@
-# CleverNote - Voice-to-Text with One Keystroke
+# Vox - Voice-to-Text with One Keystroke
 
 A fast, lightweight voice transcription tool supporting multiple state-of-the-art ASR models. Press a hotkey to record, and your speech is instantly transcribed and pasted where you need it.
 
@@ -48,8 +48,8 @@ sudo apt install -y \
 ### Linux (Quick Install)
 
 ```bash
-git clone https://github.com/yourusername/clevernote
-cd clevernote
+git clone https://github.com/yourusername/vox
+cd vox
 chmod +x install_linux.sh
 ./install_linux.sh
 ```
@@ -62,15 +62,15 @@ The installer will:
 
 **Enable auto-paste** (required for Ctrl+V injection):
 ```bash
-sudo setcap "cap_dac_override+p" $(which clevernote-daemon)
+sudo setcap "cap_dac_override+p" $(which vox-daemon)
 ```
 
 ### Manual Installation
 
 ```bash
-cargo build --release --bin clevernote-daemon --bin clevernote
-cp target/release/clevernote-daemon ~/.local/bin/
-cp target/release/clevernote ~/.local/bin/
+cargo build --release --bin vox-daemon --bin vox
+cp target/release/vox-daemon ~/.local/bin/
+cp target/release/vox ~/.local/bin/
 ```
 
 ## Usage
@@ -82,37 +82,37 @@ Bind two keys in your compositor — one to start, one to stop:
 **Hyprland (`~/.config/hypr/hyprland.conf`):**
 ```
 # Basic: transcribe only
-bind = CTRL, SPACE, exec, clevernote start
-bindr = CTRL, SPACE, exec, clevernote stop
+bind = CTRL, SPACE, exec, vox start
+bindr = CTRL, SPACE, exec, vox stop
 
 # With LLM cleanup (uses configured LLM)
-bind = CTRL SHIFT, SPACE, exec, clevernote start --llm
-bindr = CTRL SHIFT, SPACE, exec, clevernote stop
+bind = CTRL SHIFT, SPACE, exec, vox start --llm
+bindr = CTRL SHIFT, SPACE, exec, vox stop
 
 # With a custom one-off prompt
-bind = SUPER, SPACE, exec, clevernote start --prompt "Format as bullet points: {text}"
-bindr = SUPER, SPACE, exec, clevernote stop
+bind = SUPER, SPACE, exec, vox start --prompt "Format as bullet points: {text}"
+bindr = SUPER, SPACE, exec, vox stop
 ```
 
 ### Toggle mode
 
 ```bash
-clevernote toggle   # start if stopped, stop if recording
+vox toggle   # start if stopped, stop if recording
 ```
 
 ### CLI
 
 ```bash
-clevernote status   # check daemon status
-clevernote quit     # stop daemon
-clevernote model list           # list available models
-clevernote model pull <id>      # download a model
-clevernote model set <id>       # switch active ASR model
+vox status   # check daemon status
+vox quit     # stop daemon
+vox model list           # list available models
+vox model pull <id>      # download a model
+vox model set <id>       # switch active ASR model
 ```
 
 ## Configuration
 
-On first run the daemon writes a template to `~/.config/clevernote/config.toml` with all options commented out. Edit it to enable what you need:
+On first run the daemon writes a template to `~/.config/vox/config.toml` with all options commented out. Edit it to enable what you need:
 
 ```toml
 # Transcription model to use.
@@ -129,7 +129,7 @@ auto_paste = true
 
 # ── LLM post-processing ────────────────────────────────────────────────────
 # Run LLM on every recording by default. Can also be triggered per-recording
-# with `clevernote start --llm` regardless of this setting.
+# with `vox start --llm` regardless of this setting.
 # process_transcription = false
 
 # Prompt template. {text} is replaced with the raw transcript.
@@ -158,7 +158,7 @@ auto_paste = true
 
 ## ASR Models
 
-Models are stored in `~/.config/clevernote/models/` and downloaded on demand.
+Models are stored in `~/.config/vox/models/` and downloaded on demand.
 
 ### Available Models
 
@@ -180,14 +180,14 @@ Models are stored in `~/.config/clevernote/models/` and downloaded on demand.
 | `sensevoice-small` | 937 MB | Chinese / Japanese / Korean / English |
 
 ```bash
-clevernote model list           # see all models + download status
-clevernote model pull <id>      # download
-clevernote model set <id>       # switch (restarts daemon)
+vox model list           # see all models + download status
+vox model pull <id>      # download
+vox model set <id>       # switch (restarts daemon)
 ```
 
 ## LLM Post-processing
 
-CleverNote can optionally clean up transcriptions through an LLM. The LLM worker runs in the background and is triggered either per-recording (`--llm` flag) or automatically for every recording (`process_transcription = true`).
+Vox can optionally clean up transcriptions through an LLM. The LLM worker runs in the background and is triggered either per-recording (`--llm` flag) or automatically for every recording (`process_transcription = true`).
 
 **Priority:** local ONNX model › cloud API. If only one is configured, that one is used.
 
@@ -197,7 +197,7 @@ No API key, no network access, runs on CPU.
 
 ```bash
 # Download a model first
-clevernote model pull qwen3.5-0.8b-fp16
+vox model pull qwen3.5-0.8b-fp16
 
 # Then set in config.toml:
 # llm_model = "qwen3.5-0.8b-fp16"
@@ -229,10 +229,10 @@ Set `llm_api_key` and optionally `llm_api_provider` and `llm_api_model`.
 
 ```bash
 # Use LLM for this recording (regardless of process_transcription setting)
-clevernote start --llm
+vox start --llm
 
 # Use a custom prompt for this recording
-clevernote start --prompt "Summarise in one sentence: {text}"
+vox start --prompt "Summarise in one sentence: {text}"
 ```
 
 ## Architecture
@@ -250,21 +250,21 @@ clevernote start --prompt "Summarise in one sentence: {text}"
 ### Auto-paste not working
 ```bash
 # Grant uinput access
-sudo setcap "cap_dac_override+p" $(which clevernote-daemon)
+sudo setcap "cap_dac_override+p" $(which vox-daemon)
 ```
 
 ### Model download fails
 ```bash
-clevernote model pull <id>   # retry download
+vox model pull <id>   # retry download
 ```
 
 ### LLM not running
-- Local model: check it is downloaded (`clevernote model list`) and `llm_model` is set in config
+- Local model: check it is downloaded (`vox model list`) and `llm_model` is set in config
 - API: check the API key is correct and `llm_api_provider` matches the key type
 
 ### No input device found
 - Check microphone permissions in system settings
-- Use `clevernote device list` to see available devices, then set `input_device` in config
+- Use `vox device list` to see available devices, then set `input_device` in config
 
 ## License
 

@@ -451,7 +451,7 @@ mod imp {
             &qh,
             surface,
             Layer::Overlay,
-            Some("clevernote-overlay"),
+            Some("vox-overlay"),
             None,
         );
 
@@ -526,7 +526,7 @@ pub fn show_recording_overlay() -> Arc<AtomicBool> {
             .args([
                 "--urgency=low",
                 "--expire-time=0",
-                "clevernote",
+                "vox",
                 "Recording…",
             ])
             .spawn();
@@ -549,7 +549,7 @@ pub fn show_llm_processing() {
             .args([
                 "--urgency=low",
                 "--expire-time=0",
-                "clevernote",
+                "vox",
                 "Processing…",
             ])
             .spawn();
@@ -570,7 +570,7 @@ pub fn show_all_done() {
             .args([
                 "--urgency=low",
                 "--expire-time=2000",
-                "clevernote",
+                "vox",
                 "Transcription complete",
             ])
             .spawn();

@@ -66,7 +66,7 @@ pub fn copy_and_paste(
                         warn!("Failed to auto-type via evdev: {}", e);
                         println!("⚠️  Auto-type failed - Press Ctrl+V to paste");
                         println!(
-                            "   To enable: sudo setcap \"cap_dac_override+p\" $(which clevernote-daemon)"
+                            "   To enable: sudo setcap \"cap_dac_override+p\" $(which vox-daemon)"
                         );
                     }
                 }

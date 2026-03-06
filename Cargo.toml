@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "clevernote"
+name = "vox"
 path = "src/lib.rs"
 
 [[bin]]
@@ -12,12 +12,12 @@ name = "parakeet"
 path = "src/main.rs"
 
 [[bin]]
-name = "clevernote-daemon"
+name = "vox-daemon"
 path = "src/bin/daemon.rs"
 required-features = ["daemon"]
 
 [[bin]]
-name = "clevernote"
+name = "vox"
 path = "src/bin/client.rs"
 
 [dependencies]

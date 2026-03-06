@@ -1,4 +1,4 @@
-# CleverNote for Linux/Wayland
+# Vox for Linux/Wayland
 
 Voice transcription daemon for Linux with Wayland/Hyprland support.
 
@@ -17,17 +17,17 @@ Voice transcription daemon for Linux with Wayland/Hyprland support.
 
 ```
 ┌──────────────────┐         Unix Socket          ┌─────────────────┐
-│  Compositor      │      ~/.config/clevernote/          │   clevernote    │
+│  Compositor      │      ~/.config/vox/          │   vox    │
 │  (Hyprland/Sway) │◄───────daemon.sock───────────┤   (client)      │
 │                  │                               └─────────────────┘
 │  Hotkey: Ctrl+Space                                       │
 │      │                                                    │
 │      ▼                                                    ▼
-│  exec clevernote toggle                         Sends: Toggle command
+│  exec vox toggle                         Sends: Toggle command
 └──────────────────┘                                       │
                                                            ▼
          ┌─────────────────────────────────────────────────────────┐
-         │           clevernote-daemon                              │
+         │           vox-daemon                              │
          ├─────────────────────────────────────────────────────────┤
          │  • Parakeet TDT model (loaded once, stays hot)          │
          │  • Audio capture (cpal)                                  │
@@ -54,11 +54,11 @@ This will:
 
 ```bash
 # Build
-cargo build --release --features daemon --bin clevernote-daemon --bin clevernote
+cargo build --release --features daemon --bin vox-daemon --bin vox
 
 # Install
-cp target/release/clevernote-daemon ~/.local/bin/
-cp target/release/clevernote ~/.local/bin/
+cp target/release/vox-daemon ~/.local/bin/
+cp target/release/vox ~/.local/bin/
 
 # Add to PATH (if needed)
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
@@ -72,10 +72,10 @@ Add to `~/.config/hypr/hyprland.conf`:
 
 ```conf
 # Start daemon on login
-exec-once = clevernote-daemon
+exec-once = vox-daemon
 
 # Bind Ctrl+Space to toggle recording
-bind = CTRL, SPACE, exec, clevernote toggle
+bind = CTRL, SPACE, exec, vox toggle
 ```
 
 Then reload Hyprland config or restart.
@@ -86,10 +86,10 @@ Add to `~/.config/sway/config`:
 
 ```conf
 # Start daemon on login
-exec clevernote-daemon
+exec vox-daemon
 
 # Bind Ctrl+Space to toggle recording
-bindsym Ctrl+Space exec clevernote toggle
+bindsym Ctrl+Space exec vox toggle
 ```
 
 Then reload: `swaymsg reload`
@@ -97,21 +97,21 @@ Then reload: `swaymsg reload`
 ### Other Compositors
 
 The daemon works with any compositor that can:
-- Run background processes (`exec clevernote-daemon`)
-- Bind hotkeys to commands (`exec clevernote toggle`)
+- Run background processes (`exec vox-daemon`)
+- Bind hotkeys to commands (`exec vox toggle`)
 
 ### Systemd (Auto-start on Login)
 
 ```bash
 # Install service
-cp install/systemd/clevernote-daemon.service ~/.config/systemd/user/
+cp install/systemd/vox-daemon.service ~/.config/systemd/user/
 
 # Enable and start
-systemctl --user enable clevernote-daemon.service
-systemctl --user start clevernote-daemon.service
+systemctl --user enable vox-daemon.service
+systemctl --user start vox-daemon.service
 
 # Check status
-systemctl --user status clevernote-daemon
+systemctl --user status vox-daemon
 ```
 
 ## Usage
@@ -120,12 +120,12 @@ systemctl --user status clevernote-daemon
 
 **Option 1: Manual**
 ```bash
-clevernote-daemon
+vox-daemon
 ```
 
 **Option 2: Systemd**
 ```bash
-systemctl --user start clevernote-daemon
+systemctl --user start vox-daemon
 ```
 
 **Option 3: Compositor autostart** (see Configuration above)
@@ -141,19 +141,19 @@ Once the daemon is running and hotkeys are bound:
 The transcribed text will automatically:
 - ✅ Copy to clipboard (wl-copy on Wayland)
 - ✅ Paste at cursor position (smart detection: Ctrl+Shift+V for terminals, Ctrl+V for apps)
-- ✅ Save to `~/.config/clevernote/transcripts/history.json` (last 100 transcripts)
+- ✅ Save to `~/.config/vox/transcripts/history.json` (last 100 transcripts)
 
 ### Manual Control
 
 ```bash
 # Toggle recording
-clevernote toggle
+vox toggle
 
 # Check daemon status
-clevernote status
+vox status
 
 # Stop daemon
-clevernote quit
+vox quit
 ```
 
 ## Requirements
@@ -172,7 +172,7 @@ clevernote quit
 After installation, grant the daemon permission to create virtual keyboard devices:
 
 ```bash
-sudo setcap cap_dac_override+ep ~/.local/bin/clevernote-daemon
+sudo setcap cap_dac_override+ep ~/.local/bin/vox-daemon
 ```
 
 **Why this is needed:**
@@ -193,30 +193,30 @@ sudo setcap cap_dac_override+ep ~/.local/bin/clevernote-daemon
 
 ```bash
 # Check if running
-pgrep clevernote-daemon
+pgrep vox-daemon
 
 # Check logs
-journalctl --user -u clevernote-daemon -f
+journalctl --user -u vox-daemon -f
 
 # Or run manually to see errors
-clevernote-daemon
+vox-daemon
 ```
 
 ### Hotkey not working
 
-1. Make sure daemon is running: `clevernote status`
+1. Make sure daemon is running: `vox status`
 2. Check compositor config syntax
 3. Reload compositor config
-4. Try manual test: `clevernote toggle`
+4. Try manual test: `vox toggle`
 
 ### Paste not working
 
-CleverNote uses **evdev** (`/dev/uinput`) for keyboard simulation, which works on both X11 and Wayland.
+Vox uses **evdev** (`/dev/uinput`) for keyboard simulation, which works on both X11 and Wayland.
 
 **Setup required:**
 ```bash
 # Grant the daemon permission to access /dev/uinput
-sudo setcap cap_dac_override+ep $(which clevernote-daemon)
+sudo setcap cap_dac_override+ep $(which vox-daemon)
 ```
 
 **How it works:**
@@ -240,10 +240,10 @@ On Hyprland, the daemon queries `hyprctl activewindow -j` to check window class 
 - Virtual keyboard device is destroyed after paste
 
 **Troubleshooting:**
-- Verify capability: `getcap ~/.local/bin/clevernote-daemon`
+- Verify capability: `getcap ~/.local/bin/vox-daemon`
 - Should show: `cap_dac_override=ep`
 - If auto-paste fails, text is still in clipboard (manual Ctrl+V works)
-- Check logs: `journalctl --user -u clevernote-daemon -f`
+- Check logs: `journalctl --user -u vox-daemon -f`
 
 ### Audio issues
 
@@ -255,17 +255,17 @@ arecord -l
 pactl list sources
 
 # Test recording
-clevernote toggle
+vox toggle
 # Speak for a few seconds
-clevernote toggle
-# Check ~/.config/clevernote/transcripts/
+vox toggle
+# Check ~/.config/vox/transcripts/
 ```
 
 ### Model download
 
 On first run, the daemon will download the Parakeet TDT model (~3GB) to:
 ```
-~/.config/clevernote/models/parakeet-tdt/
+~/.config/vox/models/parakeet-tdt/
 ```
 
 This happens automatically. If it fails, check internet connection.
@@ -302,7 +302,7 @@ This happens automatically. If it fails, check internet connection.
 
 ### IPC Protocol
 
-Daemon and client communicate via Unix socket at `~/.config/clevernote/daemon.sock`.
+Daemon and client communicate via Unix socket at `~/.config/vox/daemon.sock`.
 
 Messages are JSON-encoded:
 
@@ -335,7 +335,7 @@ Audio stream stays in main thread (cpal::Stream is !Send).
 
 ## License
 
-Same as main CleverNote project (MIT/Apache-2.0).
+Same as main Vox project (MIT/Apache-2.0).
 
 ## Credits
 

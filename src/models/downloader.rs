@@ -37,7 +37,7 @@ fn download_file(url: &str, dest_path: &Path, show_progress: bool) -> Result<()>
 
     let mut response = client
         .get(url)
-        .header("User-Agent", "clevernote/0.1.0")
+        .header("User-Agent", "vox/0.1.0")
         .send()?;
 
     if !response.status().is_success() {
