@@ -4,8 +4,9 @@
 /// - Anchors to the top-right corner with exact margins
 /// - Never steals keyboard focus (`KeyboardInteractivity::None`)
 /// - Has a fully transparent background
-/// - Shows a pulsing red dot while recording, then a green checkmark after
-///   transcription completes (auto-closes after 1.5 s)
+/// - Shows a pulsing red dot while recording, then a spinning circle while
+///   post-processing (LLM), then a green checkmark after everything completes
+///   (auto-closes after 1.5 s)
 ///
 /// Runs on its own thread — no main-thread requirement.
 #[cfg(target_os = "linux")]
@@ -31,14 +32,17 @@ mod imp {
         Connection, QueueHandle,
     };
 
-    use std::sync::{mpsc, Arc, Mutex, OnceLock};
+    use std::sync::{mpsc, Arc, Mutex};
     use std::time::Instant;
 
     // ── Commands ──────────────────────────────────────────────────────────────
 
     #[derive(Debug)]
     pub enum Cmd {
-        TranscriptionDone,
+        /// Transcription finished; LLM post-processing is now running.
+        Processing,
+        /// Everything finished (transcription, and LLM if applicable).
+        Done,
         Close,
     }
 
@@ -47,6 +51,8 @@ mod imp {
     #[derive(Clone, Copy, PartialEq)]
     enum Phase {
         Recording,
+        /// LLM post-processing is in flight — show spinning circle.
+        Processing,
         Done,
     }
 
@@ -65,6 +71,7 @@ mod imp {
 
         phase: Phase,
         start_time: Instant,
+        phase_start: Instant,
         done_at: Option<Instant>,
         cmd_rx: Arc<Mutex<mpsc::Receiver<Cmd>>>,
         exit: bool,
@@ -135,6 +142,57 @@ mod imp {
                             &path,
                             &paint,
                             tiny_skia::FillRule::Winding,
+                            tiny_skia::Transform::identity(),
+                            None,
+                        );
+                    }
+                }
+                Phase::Processing => {
+                    // Spinning arc to indicate LLM post-processing.
+                    // Background dim circle
+                    let mut paint = tiny_skia::Paint::default();
+                    paint.anti_alias = true;
+                    paint.set_color(tiny_skia::Color::from_rgba(0.15, 0.55, 0.9, 0.25).unwrap());
+                    if let Some(path) = tiny_skia::PathBuilder::from_circle(cx, cy, max_r) {
+                        pixmap.fill_path(
+                            &path,
+                            &paint,
+                            tiny_skia::FillRule::Winding,
+                            tiny_skia::Transform::identity(),
+                            None,
+                        );
+                    }
+
+                    // Spinning arc — draw as a stroked partial circle rotated over time.
+                    let phase_t = self.phase_start.elapsed().as_secs_f32();
+                    let angle = phase_t * 2.5; // radians per second
+                    let arc_span = std::f32::consts::PI * 1.2; // ~216° arc
+
+                    // Build arc path manually using line segments
+                    let ring_r = max_r * 0.80;
+                    let steps = 48usize;
+                    let mut pb = tiny_skia::PathBuilder::new();
+                    for i in 0..=steps {
+                        let frac = i as f32 / steps as f32;
+                        let a = angle + frac * arc_span;
+                        let x = cx + ring_r * a.cos();
+                        let y = cy + ring_r * a.sin();
+                        if i == 0 {
+                            pb.move_to(x, y);
+                        } else {
+                            pb.line_to(x, y);
+                        }
+                    }
+                    if let Some(path) = pb.finish() {
+                        let mut stroke = tiny_skia::Stroke::default();
+                        stroke.width = max_r * 0.22;
+                        stroke.line_cap = tiny_skia::LineCap::Round;
+                        stroke.line_join = tiny_skia::LineJoin::Round;
+                        paint.set_color(tiny_skia::Color::from_rgba(0.2, 0.6, 1.0, 1.0).unwrap());
+                        pixmap.stroke_path(
+                            &path,
+                            &paint,
+                            &stroke,
                             tiny_skia::Transform::identity(),
                             None,
                         );
@@ -253,7 +311,11 @@ mod imp {
             // Check commands
             let cmd = self.cmd_rx.lock().unwrap().try_recv().ok();
             match cmd {
-                Some(Cmd::TranscriptionDone) => {
+                Some(Cmd::Processing) => {
+                    self.phase = Phase::Processing;
+                    self.phase_start = Instant::now();
+                }
+                Some(Cmd::Done) => {
                     self.phase = Phase::Done;
                     self.done_at = Some(Instant::now());
                 }
@@ -345,8 +407,14 @@ mod imp {
     }
 
     impl WaylandHandle {
+        /// Transcription done; LLM post-processing is starting — show spinner.
+        pub fn signal_processing(&self) {
+            let _ = self.tx.send(Cmd::Processing);
+        }
+
+        /// Everything done — show green checkmark.
         pub fn signal_done(&self) {
-            let _ = self.tx.send(Cmd::TranscriptionDone);
+            let _ = self.tx.send(Cmd::Done);
         }
     }
 
@@ -395,6 +463,7 @@ mod imp {
 
         let pool = SlotPool::new((SIZE * SIZE * 4) as usize, &shm)?;
 
+        let now = Instant::now();
         let mut app = OverlayApp {
             registry_state: RegistryState::new(&globals),
             output_state: OutputState::new(&globals, &qh),
@@ -405,7 +474,8 @@ mod imp {
             height: SIZE,
             configured: false,
             phase: Phase::Recording,
-            start_time: Instant::now(),
+            start_time: now,
+            phase_start: now,
             done_at: None,
             cmd_rx,
             exit: false,
@@ -464,7 +534,31 @@ pub fn show_recording_overlay() -> Arc<AtomicBool> {
     Arc::new(AtomicBool::new(false))
 }
 
-pub fn show_transcription_complete() {
+/// Signal that transcription is done and LLM post-processing is now running.
+/// Shows a spinning circle. Call `show_all_done()` when LLM finishes.
+/// If no LLM post-processing is needed, call `show_all_done()` directly.
+pub fn show_llm_processing() {
+    #[cfg(target_os = "linux")]
+    if is_wayland() {
+        if let Some(handle) = handle_store().lock().unwrap().as_ref() {
+            handle.signal_processing();
+        }
+    } else {
+        // X11 / unknown: replace with an in-progress notification
+        let _ = std::process::Command::new("notify-send")
+            .args([
+                "--urgency=low",
+                "--expire-time=0",
+                "clevernote",
+                "Processing…",
+            ])
+            .spawn();
+    }
+}
+
+/// Signal that everything is done (transcription + optional LLM).
+/// Shows green checkmark, auto-closes after 1.5 s.
+pub fn show_all_done() {
     #[cfg(target_os = "linux")]
     if is_wayland() {
         if let Some(handle) = handle_store().lock().unwrap().as_ref() {
@@ -481,6 +575,12 @@ pub fn show_transcription_complete() {
             ])
             .spawn();
     }
+}
+
+/// Legacy alias — kept for any call sites not yet using LLM flow.
+/// Immediately transitions to "Done" (green checkmark).
+pub fn show_transcription_complete() {
+    show_all_done();
 }
 
 pub fn hide_recording_overlay(_should_close: Arc<AtomicBool>) {}

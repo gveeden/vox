@@ -24,6 +24,9 @@ enum Commands {
         /// Run LLM post-processing on this recording, overriding config
         #[arg(long)]
         llm: bool,
+        /// Skip LLM post-processing for this recording, even if process_transcription = true in config
+        #[arg(long, conflicts_with = "llm")]
+        no_llm: bool,
         /// Custom LLM prompt for this recording (implies --llm).
         /// Use {text} as placeholder for the transcript.
         #[arg(long, value_name = "PROMPT")]
@@ -79,9 +82,15 @@ fn main() {
 
     match cli.command {
         Commands::Toggle => handle_command(Command::Toggle),
-        Commands::Start { llm, prompt } => handle_command(Command::Start {
+        Commands::Start {
+            llm,
+            no_llm,
+            prompt,
+        } => handle_command(Command::Start {
             use_llm: if llm || prompt.is_some() {
                 Some(true)
+            } else if no_llm {
+                Some(false)
             } else {
                 None
             },
@@ -380,6 +389,21 @@ fn send_command(command: Command) -> Result<(), String> {
                     }
                     println!("  Uptime: {} seconds", status.uptime_seconds);
                     println!("  Recordings processed: {}", status.recordings_processed);
+                    println!(
+                        "  LLM configured: {}",
+                        if status.llm_configured { "Yes" } else { "No" }
+                    );
+                    if let Some(backend) = status.llm_backend {
+                        println!("  LLM backend: {}", backend);
+                    }
+                    println!(
+                        "  LLM on every recording: {}",
+                        if status.process_transcription {
+                            "Yes"
+                        } else {
+                            "No (use --llm to enable per-recording)"
+                        }
+                    );
                 }
                 SuccessResponse::Shutdown => {
                     println!("Daemon shutting down");

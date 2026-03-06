@@ -69,14 +69,29 @@ struct DaemonConfig {
     input_device: Option<String>,
     /// Process every transcription through the LLM by default.
     /// The --llm flag on `clevernote start` overrides this per-recording.
-    /// The LLM model is always loaded in the background if llm_model is set
-    /// and has been downloaded — this flag only controls default behaviour.
+    /// The LLM model is loaded only if llm_model or llm_api_* is configured.
+    /// This flag controls default behaviour (run on every recording vs. on-demand).
     #[serde(default = "default_process_transcription", alias = "process_with_llm")]
     process_transcription: bool,
     #[serde(default = "default_process_prompt")]
     process_prompt: String,
-    #[serde(default = "default_llm_model")]
-    llm_model: String,
+    /// Local ONNX model ID to use for LLM post-processing.
+    /// Leave unset (or comment out) to disable local LLM loading.
+    /// Example: llm_model = "qwen3.5-0.8b-fp16"
+    #[serde(default)]
+    llm_model: Option<String>,
+    /// API key for cloud LLM post-processing (Anthropic, OpenAI, or Gemini).
+    /// Set this to use a cloud API instead of (or as a fallback to) a local model.
+    /// The local model takes priority if both llm_model and llm_api_key are set.
+    #[serde(default)]
+    llm_api_key: Option<String>,
+    /// Cloud provider: "anthropic" (default), "openai", or "gemini".
+    #[serde(default)]
+    llm_api_provider: Option<String>,
+    /// Model name to use with the cloud API.
+    /// Defaults: anthropic → "claude-haiku-4-5", openai → "gpt-4o-mini", gemini → "gemini-2.0-flash"
+    #[serde(default)]
+    llm_api_model: Option<String>,
     #[serde(default = "default_intra_threads")]
     intra_threads: usize,
 }
@@ -113,10 +128,6 @@ fn default_process_prompt() -> String {
     "Clean up the following voice transcription: remove filler words (um, uh, like, you know), fix grammar and punctuation, and return only the cleaned text with no additional commentary: {text}".to_string()
 }
 
-fn default_llm_model() -> String {
-    "qwen3.5-0.8b-fp16".to_string()
-}
-
 fn default_intra_threads() -> usize {
     4
 }
@@ -132,7 +143,10 @@ impl Default for DaemonConfig {
             input_device: default_input_device(),
             process_transcription: default_process_transcription(),
             process_prompt: default_process_prompt(),
-            llm_model: default_llm_model(),
+            llm_model: None,
+            llm_api_key: None,
+            llm_api_provider: None,
+            llm_api_model: None,
             intra_threads: default_intra_threads(),
         }
     }
@@ -145,10 +159,10 @@ impl DaemonConfig {
             let config: DaemonConfig = toml::from_str(&contents)?;
             Ok(config)
         } else {
-            let config = DaemonConfig::default();
-            let toml_string = toml::to_string_pretty(&config)?;
-            fs::write(path, toml_string)?;
-            Ok(config)
+            // Write a human-readable template with all options commented out so
+            // users can see what's available without any LLM loaded by default.
+            fs::write(path, DEFAULT_CONFIG_TEMPLATE)?;
+            Ok(DaemonConfig::default())
         }
     }
 
@@ -158,6 +172,65 @@ impl DaemonConfig {
         Ok(())
     }
 }
+
+const DEFAULT_CONFIG_TEMPLATE: &str = r#"# CleverNote configuration
+# All options shown — uncomment and edit the ones you want to change.
+
+# Transcription model to use.
+# Run `clevernote model list` to see available models.
+active_model = "parakeet-tdt-0.6b-v3-int8"
+
+# Automatically paste the transcription result after recording stops.
+auto_paste = true
+
+# Use direct key injection instead of Ctrl+V (types each character individually).
+# Requires: sudo setcap "cap_dac_override+p" $(which clevernote-daemon)
+# auto_inject = false
+
+# Number of CPU threads for inference.
+# intra_threads = 4
+
+# ── LLM post-processing ────────────────────────────────────────────────────
+#
+# Optionally run an LLM over each transcription to clean up the text.
+# Choose one of:
+#   Option A — local ONNX model (private, no API key needed)
+#   Option B — cloud API: Anthropic, OpenAI, or Gemini
+# The local model takes priority when both are configured.
+#
+# Usage:
+#   clevernote start --llm            run LLM for this recording only
+#   process_transcription = true      run LLM on every recording automatically
+
+# Process every transcription through the LLM by default (without --llm flag).
+# process_transcription = false
+
+# Prompt template. Use {text} as the transcript placeholder.
+# process_prompt = "Clean up the following voice transcription: remove filler words (um, uh, like, you know), fix grammar and punctuation, and return only the cleaned text with no additional commentary: {text}"
+
+# ── Option A: Local ONNX model (private, offline) ──────────────────────────
+# Download with: clevernote model pull qwen3.5-0.8b-fp16
+# llm_model = "qwen3.5-0.8b-fp16"
+
+# ── Option B: Cloud API ────────────────────────────────────────────────────
+# Set llm_api_provider to "anthropic" (default), "openai", or "gemini".
+# Omitting llm_api_provider defaults to "anthropic".
+
+# Anthropic Claude
+# llm_api_provider = "anthropic"
+# llm_api_key = "sk-ant-..."
+# llm_api_model = "claude-haiku-4-5"
+
+# OpenAI
+# llm_api_provider = "openai"
+# llm_api_key = "sk-..."
+# llm_api_model = "gpt-4o-mini"
+
+# Google Gemini
+# llm_api_provider = "gemini"
+# llm_api_key = "AIza..."
+# llm_api_model = "gemini-2.0-flash"
+"#;
 
 #[derive(Serialize, serde::Deserialize, Clone)]
 struct TranscriptRecord {
@@ -237,6 +310,12 @@ struct DaemonState {
     pending_use_llm: std::sync::Mutex<Option<bool>>,
     /// Prompt override set by `handle_start` for the current recording.
     pending_prompt_override: std::sync::Mutex<Option<String>>,
+    /// Whether an LLM worker is running.
+    llm_configured: bool,
+    /// Human-readable LLM backend description for `clevernote status`.
+    llm_backend: Option<String>,
+    /// Whether LLM post-processing runs on every recording by default.
+    process_transcription: bool,
     /// Persistent uinput paste device (Linux only). Created once at startup so
     /// the Wayland registration cost is paid then, not at each paste.
     #[cfg(target_os = "linux")]
@@ -244,7 +323,13 @@ struct DaemonState {
 }
 
 impl DaemonState {
-    fn new(active_model: String, config_path: PathBuf) -> Self {
+    fn new(
+        active_model: String,
+        config_path: PathBuf,
+        llm_configured: bool,
+        llm_backend: Option<String>,
+        process_transcription: bool,
+    ) -> Self {
         Self {
             model_loaded: AtomicBool::new(false),
             recordings_processed: AtomicU64::new(0),
@@ -255,6 +340,9 @@ impl DaemonState {
             config_path,
             pending_use_llm: std::sync::Mutex::new(None),
             pending_prompt_override: std::sync::Mutex::new(None),
+            llm_configured,
+            llm_backend,
+            process_transcription,
             #[cfg(target_os = "linux")]
             paste_device: std::sync::Mutex::new(None),
         }
@@ -269,6 +357,9 @@ impl DaemonState {
             model_loaded: self.model_loaded.load(Ordering::Relaxed),
             recordings_processed: self.recordings_processed.load(Ordering::Relaxed),
             active_model: Some(active_model),
+            llm_configured: self.llm_configured,
+            llm_backend: self.llm_backend.clone(),
+            process_transcription: self.process_transcription,
         }
     }
 }
@@ -392,42 +483,77 @@ fn main() -> Result<()> {
         }
     };
 
-    // Start LLM worker if the configured model has been downloaded.
-    // The worker is loaded independently of process_transcription — that flag
-    // only controls whether LLM runs by default; --llm on `start` also triggers it.
-    let llm_tx: Option<std::sync::mpsc::Sender<LlmRequest>> = {
-        let llm_model_id = config.llm_model.clone();
-        match clevernote::models::ensure_model_downloaded(&llm_model_id, &models_dir, false) {
-            Ok(llm_path) => {
-                info!(
-                    "Loading LLM model ({}) from: {} (RSS before: {:.0} MB)",
-                    llm_model_id,
-                    llm_path.display(),
-                    rss_mb()
-                );
-                let (ltx, lrx) = std::sync::mpsc::channel::<LlmRequest>();
-                // Look up backend type from registry so Gemma vs Qwen dispatch works correctly
-                let llm_registry = clevernote::models::ModelRegistry::load();
-                let llm_backend_type = llm_registry
-                    .ok()
-                    .and_then(|r| r.get_model(&llm_model_id).map(|m| m.backend.clone()))
-                    .unwrap_or_else(|| "llm".to_string());
-                let llm_intra_threads = config.intra_threads;
-                thread::spawn(move || {
-                    if let Err(e) = llm_worker(lrx, llm_path, &llm_backend_type, llm_intra_threads)
-                    {
-                        error!("LLM worker error: {}", e);
-                    }
-                });
-                Some(ltx)
+    // Start LLM worker.
+    // Priority: local ONNX model (if llm_model is set and downloaded) > API (if llm_api_key set).
+    // If neither is configured, LLM post-processing is unavailable.
+    // process_transcription only controls default behaviour (every recording vs. on-demand via --llm).
+    let (llm_tx, llm_backend_desc): (Option<std::sync::mpsc::Sender<LlmRequest>>, Option<String>) = {
+        if let Some(ref llm_model_id) = config.llm_model {
+            // Local ONNX model path
+            match clevernote::models::ensure_model_downloaded(llm_model_id, &models_dir, false) {
+                Ok(llm_path) => {
+                    info!(
+                        "Loading LLM model ({}) from: {} (RSS before: {:.0} MB)",
+                        llm_model_id,
+                        llm_path.display(),
+                        rss_mb()
+                    );
+                    let (ltx, lrx) = std::sync::mpsc::channel::<LlmRequest>();
+                    let llm_registry = clevernote::models::ModelRegistry::load();
+                    let llm_backend_type = llm_registry
+                        .ok()
+                        .and_then(|r| r.get_model(llm_model_id).map(|m| m.backend.clone()))
+                        .unwrap_or_else(|| "llm".to_string());
+                    let llm_intra_threads = config.intra_threads;
+                    let desc = format!("local: {}", llm_model_id);
+                    thread::spawn(move || {
+                        if let Err(e) =
+                            llm_worker(lrx, llm_path, &llm_backend_type, llm_intra_threads)
+                        {
+                            error!("LLM worker error: {}", e);
+                        }
+                    });
+                    (Some(ltx), Some(desc))
+                }
+                Err(e) => {
+                    warn!(
+                        "LLM model '{}' not downloaded — run `clevernote model pull {}` to enable local LLM ({})",
+                        llm_model_id, llm_model_id, e
+                    );
+                    (None, None)
+                }
             }
-            Err(e) => {
-                info!(
-                    "LLM model '{}' not downloaded, LLM post-processing unavailable ({})",
-                    llm_model_id, e
-                );
-                None
-            }
+        } else if let Some(ref api_key) = config.llm_api_key {
+            // Cloud API backend
+            let provider = config
+                .llm_api_provider
+                .clone()
+                .unwrap_or_else(|| "anthropic".to_string());
+            let api_model =
+                config
+                    .llm_api_model
+                    .clone()
+                    .unwrap_or_else(|| match provider.as_str() {
+                        "openai" => "gpt-4o-mini".to_string(),
+                        "gemini" => "gemini-2.0-flash".to_string(),
+                        _ => "claude-haiku-4-5".to_string(),
+                    });
+            info!(
+                "LLM post-processing via {} API (model: {})",
+                provider, api_model
+            );
+            let (ltx, lrx) = std::sync::mpsc::channel::<LlmRequest>();
+            let api_key = api_key.clone();
+            let desc = format!("api: {} / {}", provider, api_model);
+            thread::spawn(move || {
+                if let Err(e) = llm_api_worker(lrx, provider, api_key, api_model) {
+                    error!("LLM API worker error: {}", e);
+                }
+            });
+            (Some(ltx), Some(desc))
+        } else {
+            info!("No LLM configured — set llm_model or llm_api_key in config to enable post-processing");
+            (None, None)
         }
     };
 
@@ -438,6 +564,9 @@ fn main() -> Result<()> {
     let daemon_state = Arc::new(DaemonState::new(
         config.active_model.clone(),
         config_path.clone(),
+        llm_tx.is_some(),
+        llm_backend_desc,
+        config.process_transcription,
     ));
     // Seed the persistent paste device into daemon state so the transcription
     // worker thread can access it.
@@ -927,6 +1056,128 @@ fn llm_worker(
     Ok(())
 }
 
+/// LLM worker that sends requests to the Anthropic Claude API.
+/// Uses the Messages API directly (not the OpenAI-compatible endpoint) so that
+/// the `anthropic-version` header is set correctly.
+fn llm_api_worker(
+    rx: std::sync::mpsc::Receiver<LlmRequest>,
+    provider: String,
+    api_key: String,
+    model: String,
+) -> Result<()> {
+    use serde_json::{json, Value};
+
+    info!(
+        "LLM API worker ready — provider={} model={}",
+        provider, model
+    );
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()?;
+
+    while let Ok(req) = rx.recv() {
+        let prompt = req.prompt_template.replace("{text}", &req.text);
+
+        let result = match provider.as_str() {
+            "openai" => {
+                // OpenAI Chat Completions API (also works for Azure, Ollama, etc.)
+                let body = json!({
+                    "model": model,
+                    "max_tokens": 1024,
+                    "messages": [{ "role": "user", "content": prompt }]
+                });
+                client
+                    .post("https://api.openai.com/v1/chat/completions")
+                    .bearer_auth(&api_key)
+                    .json(&body)
+                    .send()
+                    .and_then(|r| r.error_for_status())
+                    .and_then(|r| r.json::<Value>())
+                    .map_err(|e| format!("OpenAI API request failed: {}", e))
+                    .and_then(|v| {
+                        v["choices"][0]["message"]["content"]
+                            .as_str()
+                            .map(|s| s.trim().to_string())
+                            .ok_or_else(|| format!("Unexpected OpenAI response shape: {}", v))
+                    })
+            }
+            "gemini" => {
+                // Google Gemini API (v1beta generateContent)
+                let url = format!(
+                    "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+                    model, api_key
+                );
+                let body = json!({
+                    "contents": [{
+                        "parts": [{ "text": prompt }]
+                    }]
+                });
+                client
+                    .post(&url)
+                    .json(&body)
+                    .send()
+                    .and_then(|r| r.error_for_status())
+                    .and_then(|r| r.json::<Value>())
+                    .map_err(|e| format!("Gemini API request failed: {}", e))
+                    .and_then(|v| {
+                        v["candidates"][0]["content"]["parts"][0]["text"]
+                            .as_str()
+                            .map(|s| s.trim().to_string())
+                            .ok_or_else(|| format!("Unexpected Gemini response shape: {}", v))
+                    })
+            }
+            _ => {
+                // Anthropic Messages API (default)
+                let body = json!({
+                    "model": model,
+                    "max_tokens": 1024,
+                    "messages": [{ "role": "user", "content": prompt }]
+                });
+                client
+                    .post("https://api.anthropic.com/v1/messages")
+                    .header("x-api-key", &api_key)
+                    .header("anthropic-version", "2023-06-01")
+                    .json(&body)
+                    .send()
+                    .and_then(|r| r.error_for_status())
+                    .and_then(|r| r.json::<Value>())
+                    .map_err(|e| format!("Anthropic API request failed: {}", e))
+                    .and_then(|v| {
+                        v["content"][0]["text"]
+                            .as_str()
+                            .map(|s| s.trim().to_string())
+                            .ok_or_else(|| format!("Unexpected Anthropic response shape: {}", v))
+                    })
+            }
+        };
+
+        match &result {
+            Ok(text) => info!("LLM API response ({} chars)", text.len()),
+            Err(e) => {
+                error!("LLM API error: {}", e);
+                if e.contains("401")
+                    || e.contains("403")
+                    || e.contains("authentication")
+                    || e.contains("Authentication")
+                    || e.contains("Unauthorized")
+                    || e.contains("Invalid API")
+                    || e.contains("invalid_api_key")
+                {
+                    error!(
+                        "Hint: API key may be invalid or expired. \
+                         Check llm_api_key in ~/.config/clevernote/config.toml"
+                    );
+                }
+            }
+        }
+
+        let _ = req.reply.send(result);
+    }
+
+    Ok(())
+}
+
 fn transcription_worker(
     rx: std::sync::mpsc::Receiver<TranscriptionJob>,
     model_path: PathBuf,
@@ -1049,19 +1300,19 @@ fn process_transcription_with_backend(
         history.transcripts.len()
     );
 
-    // Signal overlay: transcription is done (shows checkmark, auto-closes after 1.5 s)
-    clevernote::recording_overlay::show_transcription_complete();
-
     // Resolve effective LLM flag:
     //   - job.use_llm (set by --llm / --prompt CLI flags) takes precedence
     //   - otherwise fall back to the config's process_transcription default
     let effective_use_llm = job.use_llm.unwrap_or(process_transcription);
     let effective_prompt = job.prompt_override.as_deref().unwrap_or(process_prompt);
 
-    // Optionally run LLM post-processing before clipboard
+    // Optionally run LLM post-processing before clipboard.
+    // Overlay transitions: Recording → (if LLM) Processing spinner → Done checkmark.
     let final_text = if effective_use_llm {
         if let Some(ltx) = llm_tx {
             info!("🧠 Running LLM post-processing...");
+            // Show spinning-circle indicator while LLM runs.
+            clevernote::recording_overlay::show_llm_processing();
             let llm_start = Instant::now();
 
             let (reply_tx, reply_rx) = std::sync::mpsc::sync_channel::<Result<String, String>>(1);
@@ -1071,7 +1322,7 @@ fn process_transcription_with_backend(
                 reply: reply_tx,
             };
 
-            match ltx.send(req) {
+            let result_text = match ltx.send(req) {
                 Ok(()) => {
                     // Wait up to 30 seconds for the LLM to respond
                     match reply_rx.recv_timeout(Duration::from_secs(30)) {
@@ -1085,25 +1336,40 @@ fn process_transcription_with_backend(
                             processed
                         }
                         Ok(Err(e)) => {
-                            warn!("LLM processing failed (using raw transcript): {}", e);
+                            error!(
+                                "LLM processing failed — pasting raw transcript. Error: {}",
+                                e
+                            );
+                            info!("📝 Raw transcript (LLM skipped): {}", text);
                             text.clone()
                         }
                         Err(_) => {
-                            warn!("LLM processing timed out (using raw transcript)");
+                            warn!("LLM processing timed out after 30 s — pasting raw transcript");
+                            info!("📝 Raw transcript (LLM timed out): {}", text);
                             text.clone()
                         }
                     }
                 }
                 Err(e) => {
-                    warn!("Failed to send to LLM worker (using raw transcript): {}", e);
+                    error!(
+                        "Failed to send to LLM worker — pasting raw transcript. Error: {}",
+                        e
+                    );
                     text.clone()
                 }
-            }
+            };
+            // LLM finished (success or fallback) — show green checkmark.
+            clevernote::recording_overlay::show_all_done();
+            result_text
         } else {
             warn!("--llm requested but LLM worker is not running (is llm_model configured and downloaded?)");
+            // No LLM worker available — skip spinner, go straight to done.
+            clevernote::recording_overlay::show_all_done();
             text.clone()
         }
     } else {
+        // No LLM post-processing — transcription complete is the final step.
+        clevernote::recording_overlay::show_all_done();
         text.clone()
     };
 

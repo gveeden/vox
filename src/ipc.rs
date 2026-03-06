@@ -68,6 +68,13 @@ pub struct DaemonStatus {
     pub model_loaded: bool,
     pub recordings_processed: u64,
     pub active_model: Option<String>,
+    /// Whether an LLM worker is configured and running (local or API).
+    pub llm_configured: bool,
+    /// Human-readable description of the LLM backend, e.g. "local: qwen3.5-0.8b-fp16"
+    /// or "api: anthropic / claude-haiku-4-5". None when no LLM is configured.
+    pub llm_backend: Option<String>,
+    /// Whether LLM post-processing runs on every recording by default.
+    pub process_transcription: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
