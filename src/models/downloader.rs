@@ -35,10 +35,7 @@ fn download_file(url: &str, dest_path: &Path, show_progress: bool) -> Result<()>
         .redirect(reqwest::redirect::Policy::limited(10))
         .build()?;
 
-    let mut response = client
-        .get(url)
-        .header("User-Agent", "vox/0.1.0")
-        .send()?;
+    let mut response = client.get(url).header("User-Agent", "vox/0.1.0").send()?;
 
     if !response.status().is_success() {
         return Err(anyhow!("Failed to download file: {}", response.status()));

@@ -523,12 +523,7 @@ pub fn show_recording_overlay() -> Arc<AtomicBool> {
     } else {
         // X11 / unknown: notify-send "recording started" indicator
         let _ = std::process::Command::new("notify-send")
-            .args([
-                "--urgency=low",
-                "--expire-time=0",
-                "vox",
-                "Recording…",
-            ])
+            .args(["--urgency=low", "--expire-time=0", "vox", "Recording…"])
             .spawn();
     }
     Arc::new(AtomicBool::new(false))
@@ -546,12 +541,7 @@ pub fn show_llm_processing() {
     } else {
         // X11 / unknown: replace with an in-progress notification
         let _ = std::process::Command::new("notify-send")
-            .args([
-                "--urgency=low",
-                "--expire-time=0",
-                "vox",
-                "Processing…",
-            ])
+            .args(["--urgency=low", "--expire-time=0", "vox", "Processing…"])
             .spawn();
     }
 }

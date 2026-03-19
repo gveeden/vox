@@ -6,6 +6,7 @@ edition = "2021"
 [lib]
 name = "vox"
 path = "src/lib.rs"
+crate-type = ["staticlib", "cdylib", "rlib"]
 
 [[bin]]
 name = "parakeet"
@@ -48,6 +49,7 @@ tokenizers = "0.21"
 ndarray = "0.16"
 num-complex = "0.4"
 ffts = { version = "0.1", optional = true }
+symphonia = { version = "0.5", features = ["all"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 evdev = "0.12"

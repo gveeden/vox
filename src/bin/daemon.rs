@@ -1,12 +1,6 @@
 /// Vox daemon - handles recording, transcription, and IPC
 use chrono::Local;
 use clap::Parser;
-use vox::{
-    audio::AudioCapture,
-    clipboard, convert_to_mono, get_config_dir,
-    ipc::{self, Command, DaemonStatus, Response, SuccessResponse},
-    model_downloader,
-};
 use eyre::{Result, WrapErr};
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
@@ -20,6 +14,11 @@ use std::sync::{
 };
 use std::thread;
 use std::time::{Duration, Instant};
+use vox::{
+    audio::AudioCapture,
+    clipboard, convert_to_mono, get_config_dir,
+    ipc::{self, Command, DaemonStatus, Response, SuccessResponse},
+};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Vox daemon", long_about = None)]
@@ -287,6 +286,9 @@ struct TranscriptionJob {
     use_llm: Option<bool>,
     /// Per-recording prompt override. None = use config value.
     prompt_override: Option<String>,
+    /// Optional sender to return the transcription result.
+    /// If set, the raw transcription (before LLM) will be sent here.
+    reply_tx: Option<std::sync::mpsc::Sender<Result<String, String>>>,
 }
 
 /// A request sent to the LLM worker thread.
@@ -434,8 +436,7 @@ fn main() -> Result<()> {
     // Ensure active model is downloaded
     info!("Checking for model '{}'...", config.active_model);
     let model_path =
-        match vox::models::ensure_model_downloaded(&config.active_model, &models_dir, false)
-        {
+        match vox::models::ensure_model_downloaded(&config.active_model, &models_dir, false) {
             Ok(path) => path,
             Err(e) => {
                 return Err(eyre::eyre!("Failed to ensure model is downloaded: {}", e));
@@ -449,7 +450,7 @@ fn main() -> Result<()> {
 
     // Initialize audio capture
     info!("Initializing audio capture...");
-    let audio_capture = AudioCapture::new(selected_input_device.as_deref())?;
+    let audio_capture = Arc::new(AudioCapture::new(selected_input_device.as_deref())?);
     let device_sample_rate = audio_capture.device_sample_rate();
 
     // Start audio stream (paused initially)
@@ -631,20 +632,62 @@ fn main() -> Result<()> {
     info!("✅ Vox daemon ready!");
     info!("Connect with: vox toggle");
 
-    for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                if let Err(e) = handle_client(
-                    stream,
-                    &audio_capture,
-                    &tx,
-                    &daemon_state,
-                    &output_dir,
-                    device_sample_rate,
-                    config.auto_paste,
-                    config.auto_inject,
-                ) {
-                    error!("Error handling client: {}", e);
+    let output_dir = Arc::new(output_dir);
+
+    for stream_res in listener.incoming() {
+        match stream_res {
+            Ok(mut stream) => {
+                let audio_capture = audio_capture.clone();
+                let tx = tx.clone();
+                let daemon_state = daemon_state.clone();
+                let output_dir = output_dir.clone();
+                let auto_paste = config.auto_paste;
+                let auto_inject = config.auto_inject;
+
+                // Process on the main thread for commands that touch AudioCapture
+                // (which is not Sync and must be handled carefully on Linux).
+                // We only spawn a thread for slow file transcription jobs.
+                let mut reader = BufReader::new(stream.try_clone()?);
+                let mut line = String::new();
+                if let Err(e) = reader.read_line(&mut line) {
+                    error!("Error reading from client: {}", e);
+                    continue;
+                }
+
+                let command: Command = match ipc::deserialize_command(line.trim().as_bytes()) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        error!("Error deserializing command: {}", e);
+                        continue;
+                    }
+                };
+
+                if matches!(command, Command::TranscribeFile { .. }) {
+                    thread::spawn(move || {
+                        let response = match command {
+                            Command::TranscribeFile { path } => {
+                                handle_transcribe_file(path, &tx, &output_dir, &daemon_state)
+                            }
+                            _ => unreachable!(),
+                        };
+                        if let Ok(bytes) = ipc::serialize_response(&response) {
+                            let _ = stream.write_all(&bytes);
+                        }
+                    });
+                } else {
+                    if let Err(e) = handle_client_sync(
+                        stream,
+                        command,
+                        &audio_capture,
+                        &tx,
+                        &daemon_state,
+                        &output_dir,
+                        device_sample_rate,
+                        auto_paste,
+                        auto_inject,
+                    ) {
+                        error!("Error handling client: {}", e);
+                    }
                 }
             }
             Err(e) => {
@@ -666,24 +709,17 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn handle_client(
+fn handle_client_sync(
     mut stream: UnixStream,
+    command: Command,
     audio_capture: &AudioCapture,
     tx: &std::sync::mpsc::Sender<TranscriptionJob>,
     daemon_state: &Arc<DaemonState>,
-    output_dir: &PathBuf,
+    output_dir: &Arc<PathBuf>,
     device_sample_rate: u32,
     auto_paste: bool,
     auto_inject: bool,
 ) -> Result<()> {
-    let mut reader = BufReader::new(stream.try_clone()?);
-    let mut line = String::new();
-
-    reader.read_line(&mut line)?;
-
-    let command: Command = ipc::deserialize_command(line.trim().as_bytes())
-        .wrap_err("Failed to deserialize command")?;
-
     let response = match command {
         Command::Toggle => handle_toggle(
             audio_capture,
@@ -708,7 +744,7 @@ fn handle_client(
             daemon_state,
         ),
         Command::Status => {
-            let status = daemon_state.status(&audio_capture);
+            let status = daemon_state.status(audio_capture);
             Response::Success(SuccessResponse::Status(status))
         }
         Command::Quit => {
@@ -718,12 +754,14 @@ fn handle_client(
         Command::ListModels => handle_list_models(daemon_state),
         Command::ModelInfo { model_id } => handle_model_info(&model_id, daemon_state),
         Command::SetModel { model_id } => handle_set_model(&model_id, daemon_state),
+        Command::TranscribeFile { .. } => {
+            unreachable!("TranscribeFile should be handled asynchronously")
+        }
     };
 
     // Send response
     let response_bytes = ipc::serialize_response(&response)?;
     stream.write_all(&response_bytes)?;
-    stream.flush()?;
 
     Ok(())
 }
@@ -763,7 +801,7 @@ fn handle_start(
 fn handle_stop(
     audio_capture: &AudioCapture,
     tx: &std::sync::mpsc::Sender<TranscriptionJob>,
-    output_dir: &PathBuf,
+    output_dir: &Arc<PathBuf>,
     device_sample_rate: u32,
     auto_paste: bool,
     auto_inject: bool,
@@ -801,12 +839,13 @@ fn handle_stop(
         audio_data,
         device_sample_rate,
         device_channels,
-        output_dir: output_dir.clone(),
+        output_dir: (**output_dir).clone(),
         auto_paste,
         auto_inject,
         received_at: Instant::now(),
         use_llm,
         prompt_override,
+        reply_tx: None,
     };
 
     info!("handle_stop: Sending job to transcription thread");
@@ -821,7 +860,7 @@ fn handle_stop(
 fn handle_toggle(
     audio_capture: &AudioCapture,
     tx: &std::sync::mpsc::Sender<TranscriptionJob>,
-    output_dir: &PathBuf,
+    output_dir: &Arc<PathBuf>,
     device_sample_rate: u32,
     auto_paste: bool,
     auto_inject: bool,
@@ -904,6 +943,54 @@ fn handle_model_info(model_id: &str, daemon_state: &Arc<DaemonState>) -> Respons
     };
 
     Response::Success(SuccessResponse::ModelInfo { info })
+}
+
+fn handle_transcribe_file(
+    path_str: String,
+    tx: &std::sync::mpsc::Sender<TranscriptionJob>,
+    output_dir: &Arc<PathBuf>,
+    _daemon_state: &Arc<DaemonState>,
+) -> Response {
+    let path = PathBuf::from(path_str);
+    if !path.exists() {
+        return Response::Error(format!("File not found: {}", path.display()));
+    }
+
+    info!("📄 Transcribing file: {}", path.display());
+
+    // Decode file
+    let audio_data = match vox::decode_audio_file(&path, 16000) {
+        // Model always expects 16k
+        Ok(data) => data,
+        Err(e) => return Response::Error(format!("Failed to decode audio: {}", e)),
+    };
+
+    let (reply_tx, reply_rx) = std::sync::mpsc::channel();
+
+    let job = TranscriptionJob {
+        audio_data,
+        device_sample_rate: 16000,
+        device_channels: 1, // decode_audio_file returns mono
+        output_dir: (**output_dir).clone(),
+        auto_paste: false,
+        auto_inject: false,
+        received_at: Instant::now(),
+        use_llm: None, // No LLM for file transcription by default
+        prompt_override: None,
+        reply_tx: Some(reply_tx),
+    };
+
+    if let Err(e) = tx.send(job) {
+        return Response::Error(format!("Failed to queue transcription: {}", e));
+    }
+
+    // Wait for result
+    match reply_rx.recv_timeout(Duration::from_secs(300)) {
+        // 5 minutes timeout for long files
+        Ok(Ok(text)) => Response::Success(SuccessResponse::FileTranscribed { text }),
+        Ok(Err(e)) => Response::Error(format!("Transcription failed: {}", e)),
+        Err(_) => Response::Error("Transcription timed out".to_string()),
+    }
 }
 
 fn handle_set_model(model_id: &str, daemon_state: &Arc<DaemonState>) -> Response {
@@ -1299,6 +1386,11 @@ fn process_transcription_with_backend(
         "💾 Updated history.json ({} total)",
         history.transcripts.len()
     );
+
+    // Send raw result to requester if they're waiting
+    if let Some(ref rtx) = job.reply_tx {
+        let _ = rtx.send(Ok(text.clone()));
+    }
 
     // Resolve effective LLM flag:
     //   - job.use_llm (set by --llm / --prompt CLI flags) takes precedence

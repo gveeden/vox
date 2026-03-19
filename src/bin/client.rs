@@ -1,11 +1,11 @@
 /// Vox client - sends commands to the daemon
 use clap::{Parser, Subcommand};
-use vox::ipc::{self, Command, Response, SuccessResponse};
-use vox::models::{ensure_model_downloaded, remove_model, ModelRegistry};
 use cpal::traits::{DeviceTrait, HostTrait};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
+use vox::ipc::{self, Command, Response, SuccessResponse};
+use vox::models::{ensure_model_downloaded, remove_model, ModelRegistry};
 
 #[derive(Parser)]
 #[command(author, version, about = "Vox voice transcription client", long_about = None)]
@@ -47,6 +47,11 @@ enum Commands {
     Device {
         #[command(subcommand)]
         cmd: DeviceCommands,
+    },
+    /// Transcribe a local audio file
+    Transcribe {
+        /// Path to the audio file
+        path: String,
     },
 }
 
@@ -101,6 +106,7 @@ fn main() {
         Commands::Quit => handle_command(Command::Quit),
         Commands::Model { cmd } => handle_model_command(cmd),
         Commands::Device { cmd } => handle_device_command(cmd),
+        Commands::Transcribe { path } => handle_command(Command::TranscribeFile { path }),
     }
 }
 
@@ -255,8 +261,8 @@ fn pull_model(model_id: &str, models_dir: &std::path::PathBuf) -> Result<(), Str
 }
 
 fn set_model_direct(model_id: &str) -> Result<(), String> {
-    use vox::models::ModelRegistry;
     use std::fs;
+    use vox::models::ModelRegistry;
 
     // Verify model exists in registry
     let registry =
@@ -434,6 +440,9 @@ fn send_command(command: Command) -> Result<(), String> {
                     println!("✓ Active model set to '{}'", model_id);
                     println!("  Daemon is restarting...");
                     println!("  Wait a moment, then check status with: vox status");
+                }
+                SuccessResponse::FileTranscribed { text } => {
+                    println!("{}", text);
                 }
             }
             Ok(())

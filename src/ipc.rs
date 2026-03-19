@@ -28,6 +28,8 @@ pub enum Command {
     ModelInfo { model_id: String },
     /// Set the active model (requires daemon restart)
     SetModel { model_id: String },
+    /// Transcribe a local audio file
+    TranscribeFile { path: String },
 }
 
 /// Responses sent from daemon to client
@@ -59,6 +61,8 @@ pub enum SuccessResponse {
     ModelInfo { info: ModelInfo },
     /// Model set successfully (daemon will restart)
     ModelSet { model_id: String },
+    /// Transcription of a file completed
+    FileTranscribed { text: String },
 }
 
 #[derive(Debug, Serialize, Deserialize)]

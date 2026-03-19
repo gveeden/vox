@@ -48,6 +48,8 @@ pub struct AudioCapture {
 // worker thread while cpal handles the callback thread internally.
 #[allow(unsafe_code)]
 unsafe impl Send for AudioCapture {}
+#[allow(unsafe_code)]
+unsafe impl Sync for AudioCapture {}
 
 /// Type alias kept for API compatibility; on this codebase AudioCapture is
 /// used directly from all threads.
