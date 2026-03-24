@@ -316,6 +316,12 @@ impl GraniteBackend {
         })
     }
 
+    /// Process `text` through the LLM using `prompt_template` (`{text}` placeholder).
+    pub fn process(&mut self, text: &str, prompt_template: &str) -> Result<String> {
+        let prompt = prompt_template.replace("{text}", text);
+        self.generate(&prompt)
+    }
+
     /// Generate a response for the given plain-text prompt.
     pub fn generate(&mut self, prompt: &str) -> Result<String> {
         // Apply Granite chat template:

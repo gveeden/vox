@@ -22,8 +22,9 @@ pub trait TranscriptionBackend: Send {
 pub mod audio;
 pub mod factory;
 pub mod gemma;
-pub mod granite;
 pub mod gemma3;
+pub mod gguf;
+pub mod granite;
 pub mod llm;
 pub mod moonshine;
 pub mod parakeet;

@@ -1070,6 +1070,18 @@ impl LlmProcessor for vox::models::backends::gemma3::Gemma3Backend {
     }
 }
 
+impl LlmProcessor for vox::models::backends::granite::GraniteBackend {
+    fn process(&mut self, text: &str, prompt_template: &str) -> anyhow::Result<String> {
+        self.process(text, prompt_template).map_err(|e| anyhow::anyhow!(e))
+    }
+}
+
+impl LlmProcessor for vox::models::backends::gguf::GgufBackend {
+    fn process(&mut self, text: &str, prompt_template: &str) -> anyhow::Result<String> {
+        self.process(text, prompt_template)
+    }
+}
+
 fn llm_worker(
     rx: std::sync::mpsc::Receiver<LlmRequest>,
     model_path: PathBuf,
@@ -1111,6 +1123,26 @@ fn llm_worker(
                 Err(e) => {
                     error!("Failed to load Gemma3 model: {}", e);
                     return Err(eyre::eyre!("Failed to load Gemma3 model: {}", e));
+                }
+            }
+        }
+        "granite" => {
+            use vox::models::backends::granite::GraniteBackend;
+            match GraniteBackend::new(&model_path, intra_threads) {
+                Ok(b) => Box::new(b),
+                Err(e) => {
+                    error!("Failed to load Granite model: {}", e);
+                    return Err(eyre::eyre!("Failed to load Granite model: {}", e));
+                }
+            }
+        }
+        "gguf" => {
+            use vox::models::backends::gguf::GgufBackend;
+            match GgufBackend::new(&model_path, intra_threads) {
+                Ok(b) => Box::new(b),
+                Err(e) => {
+                    error!("Failed to load GGUF model: {}", e);
+                    return Err(eyre::eyre!("Failed to load GGUF model: {}", e));
                 }
             }
         }
