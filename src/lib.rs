@@ -245,6 +245,32 @@ pub extern "C" fn vox_transcribe(
 }
 
 #[no_mangle]
+pub extern "C" fn vox_generate(
+    prompt_ptr: *const c_char,
+    model_path_ptr: *const c_char,
+) -> *mut c_char {
+    if prompt_ptr.is_null() || model_path_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let prompt = unsafe { CStr::from_ptr(prompt_ptr) }.to_string_lossy().to_string();
+    let model_path_str = unsafe { CStr::from_ptr(model_path_ptr) }.to_string_lossy().to_string();
+    let model_path = Path::new(&model_path_str);
+
+    use models::backends::granite::GraniteBackend;
+
+    let result = (|| -> anyhow::Result<String> {
+        let mut backend = GraniteBackend::new(model_path, 2)?;
+        backend.generate(&prompt)
+    })();
+
+    match result {
+        Ok(text) => CString::new(text).unwrap_or_default().into_raw(),
+        Err(e) => CString::new(format!("Error: {}", e)).unwrap_or_default().into_raw(),
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn vox_free_string(s: *mut c_char) {
     if !s.is_null() {
         unsafe {
