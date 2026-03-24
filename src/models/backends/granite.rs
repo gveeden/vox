@@ -416,7 +416,7 @@ impl GraniteBackend {
         if has_num_logits_to_keep {
             inputs.push((
                 "num_logits_to_keep".to_string(),
-                ort::value::Value::from_array(([], vec![1i64]))?.into(),
+                ort::value::Value::from_array(([] as [usize; 0], vec![1i64]))?.into(),
             ));
         }
 
